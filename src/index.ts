@@ -19,9 +19,15 @@ export class BlazeJob {
         config TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         executed_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        lastError TEXT
       )
     `).run();
+    try {
+      this.db.prepare('ALTER TABLE tasks ADD COLUMN lastError TEXT').run();
+    } catch (e) {
+      // Ignore si déjà présent
+    }
   }
 
   public async start() {
@@ -49,6 +55,7 @@ export class BlazeJob {
       status: string;
       executed_at: string | null;
       created_at: string;
+      lastError: string | null;
     };
     const now = new Date().toISOString();
     const selectStmt = this.db.prepare(`
@@ -64,7 +71,7 @@ export class BlazeJob {
       const taskFn = this.taskMap.get(task.id);
       if (!taskFn) {
         // No function mapped, mark as failed
-        this.db.prepare(`UPDATE tasks SET status = 'failed' WHERE id = ?`).run(task.id);
+        this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = 'No function mapped' WHERE id = ?`).run(task.id);
         continue;
       }
       try {
@@ -83,11 +90,11 @@ export class BlazeJob {
         if (retriesLeft > 0) {
           // Retry later: status pending, runAt = now + 1min
           const retryRunAt = new Date(Date.now() + 60000).toISOString();
-          this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ?, retriesLeft = ? WHERE id = ?`)
-            .run(retryRunAt, retriesLeft, task.id);
+          this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ?, retriesLeft = ?, lastError = ? WHERE id = ?`)
+            .run(retryRunAt, retriesLeft, String(err), task.id);
         } else {
           // Mark as failed
-          this.db.prepare(`UPDATE tasks SET status = 'failed' WHERE id = ?`).run(task.id);
+          this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
         }
       }
     }
@@ -180,8 +187,28 @@ app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => 
   reply.code(204).send();
 });
 
-(async () => {
-  await jobs.start();
-  await app.listen({ port: 9000 });
-  console.log('Fastify server running on http://localhost:9000');
-})();
+// Méthode utilitaire pour arrêter proprement le serveur et le scheduler
+export async function stopServer() {
+  await app.close();
+  jobs.stop();
+  jobs['db'].close();
+  console.log('Serveur et scheduler arrêtés proprement.');
+}
+
+// Optionnel : gestion du signal SIGTERM/SIGINT
+process.on('SIGTERM', async () => {
+  await stopServer();
+  process.exit(0);
+});
+process.on('SIGINT', async () => {
+  await stopServer();
+  process.exit(0);
+});
+
+if (require.main === module) {
+  (async () => {
+    await jobs.start();
+    await app.listen({ port: 9000 });
+    console.log('Fastify server running on http://localhost:9000');
+  })();
+}
