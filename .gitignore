@@ -134,3 +134,17 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# ts-node
+.ts-node
+.ts-node/register
+.ts-node/transpile-only
+.ts-node/script
+.ts-node/esm
+.ts-node/cwd
+.ts-node-script
+.ts-node-script-deprecated
+
+# db
+blazerjob.db
+*.db
