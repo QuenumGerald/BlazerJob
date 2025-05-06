@@ -3,48 +3,53 @@
 **BlazeJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
-## 🚀 Quick Start
+# ⚠️ Connecteurs supportés
 
-### Installation
-```bash
-npm install blazerjob
-# or
-yarn add blazerjob
-```
+Depuis la version actuelle, **BlazeJob** ne supporte plus que le connecteur Cosmos. Tous les autres connecteurs (Solana, Onchain/Ethereum, Email, HTTP, Shell, Fintech) sont désactivés ou non maintenus. Toute tâche autre que Cosmos sera simplement loggée côté serveur, sans effet réel.
 
-### Basic Example
+## Cosmos uniquement
+
+- **Type accepté** : `cosmos`
+- **Fonctionnalités** :
+  - Envoi de tokens (sendTokens)
+  - Requêtes de solde (balance), transactions (tx), et requêtes personnalisées (custom)
+  - Batch de requêtes Cosmos via `scheduleManyCosmosQueries`
+
+### Exemple de tâche Cosmos
 ```typescript
-import { BlazeJob } from 'blazerjob';
-
-// Initialize with SQLite database
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
-
-// Schedule a simple task
-jobs.schedule(async () => {
-  console.log('Task executed at', new Date().toISOString());
-}, { 
-  runAt: new Date(Date.now() + 5000), // Run in 5 seconds
-  type: 'custom',
-  config: { note: 'My first task' }
-});
-
-// Start the scheduler
-jobs.start();
-```
-
-### Cosmos Example
-```typescript
-import { scheduleManyCosmosQueries } from 'blazerjob/cosmos';
-
-// Schedule multiple Cosmos queries
-await scheduleManyCosmosQueries(job, {
-  addresses: ['cosmos1...', 'cosmos1...'],
-  count: 10,
-  queryType: 'balance',
-  intervalMs: 1000,
-  webhookUrl: 'https://your-webhook.com/endpoint'
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'cosmos',
+  config: JSON.stringify({
+    queryType: 'balance',
+    queryParams: { address: 'cosmos1...' }
+    // rpcUrl peut venir de .env
+  })
 });
 ```
+
+### Exemple d'envoi de tokens Cosmos
+```typescript
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'cosmos',
+  config: JSON.stringify({
+    to: 'cosmos1...',
+    amount: '100000',
+    denom: 'uatom',
+    mnemonic: process.env.COSMOS_MNEMONIC,
+    chainId: 'cosmoshub-4',
+    rpcUrl: process.env.COSMOS_RPC_URL
+  })
+});
+```
+
+## Variables d'environnement nécessaires
+- `COSMOS_MNEMONIC` – Mnemonic Cosmos
+- `COSMOS_RPC_URL` – Endpoint RPC Cosmos
+
+## Autres types de tâches
+Tout type autre que `cosmos` (ex: `shell`, `onchain`, `solana`, `email`, `fintech`, `http`) sera ignoré et simplement loggé. Pour toute extension, il faudra réactiver ou développer le connecteur correspondant.
 
 ## CLI
 
@@ -55,7 +60,7 @@ BlazeJob provides a CLI to easily manage your scheduled tasks:
 npx ts-node src/bin/cli.ts help
 
 # Schedule a task (e.g., shell)
-npx ts-node src/bin/cli.ts schedule --type shell --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
+npx ts-node src/bin/cli.ts schedule --type cosmos --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
 
 # List tasks (default blazerjob.db)
 npx ts-node src/bin/cli.ts list
@@ -78,7 +83,7 @@ Displays tasks from all `.db` files in the current directory, with separate sect
 ┌─────────┬────┬─────────┬────────────────────────────┬──────────┬─────────────────────────────┐
 │ (index) │ id │  type   │           runAt            │  status  │          config             │
 ├─────────┼────┼─────────┼────────────────────────────┼──────────┼─────────────────────────────┤
-│    0    │ 1  │ 'shell' │ '2025-05-05T21:24:13.727Z' │ 'failed' │ '{"cmd":"echo test"}'       │
+│    0    │ 1  │ 'cosmos' │ '2025-05-05T21:24:13.727Z' │ 'failed' │ '{"cmd":"echo test"}'       │
 └─────────┴────┴─────────┴────────────────────────────┴──────────┴─────────────────────────────┘
 
 === Database: tasks_cosmos_query.db ===
@@ -94,8 +99,8 @@ Shows tasks only from the default database (`blazerjob.db`).
 
 #### `schedule`
 Schedules a new task. Available options:
-- `--type`: Task type (`shell`, `cosmos`, etc.)
-- `--cmd`: Command to execute (for shell tasks)
+- `--type`: Task type (`cosmos`)
+- `--cmd`: Command to execute (for cosmos tasks)
 - `--runAt`: Execution time (default: now)
 - `--interval`: Repeat interval in ms (optional)
 - `--priority`: Task priority (optional)
@@ -135,27 +140,13 @@ cp .env.example .env
 
 Example `.env`:
 ```
-PRIVATE_KEY=0xYOUR_PRIVATE_KEY
-RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
+COSMOS_MNEMONIC=0xYOUR_COSMOS_MNEMONIC
+COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
 ```
 
 - **Never commit your real `.env` to version control!**
 - You can omit `privateKey` and `rpcUrl` from the task config to use values from the environment.
 - This pattern can be used for other secrets (API keys, fintech credentials, etc.) in custom handlers.
-
-### Example: Schedule an ETH Transfer using dotenv
-
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(Date.now() + 10000),
-  type: 'onchain',
-  config: JSON.stringify({
-    to: '0xRecipientAddress',
-    value: '0.01' // ETH
-    // rpcUrl and privateKey will be read from process.env
-  })
-});
-```
 
 ---
 
@@ -171,7 +162,7 @@ jobs.schedule(async () => {}, {
   - `interval?`: (optional) Number of milliseconds between executions (for recurring tasks).
   - `priority?`: (optional) Higher priority tasks run first.
   - `retriesLeft?`: (optional) Number of retry attempts if the task fails.
-  - `type`: Task type (e.g. `'custom'`, `'shell'`, `'onchain'`, `'http'`, `'fintech'`).
+  - `type`: Task type (e.g. `'cosmos'`).
   - `config?`: (optional) Additional configuration for the task, see [TaskConfig](#taskconfig-interface) below.
   - `webhookUrl?`: (optional) If set, BlazeJob will POST a JSON payload to this URL on task success, failure, or retry.
 
@@ -185,39 +176,57 @@ Returns the ID of the created task.
 
 ---
 
+## Arrêt automatique du process (option autoExit)
+
+Pour les cas de test ou de script, vous pouvez demander à BlazeJob de couper le process automatiquement dès que toutes les tâches périodiques (avec `maxRuns` ou `maxDurationMs`) sont terminées :
+
+```typescript
+const jobs = new BlazeJob({ dbPath: './test.db', autoExit: true });
+
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  interval: 2000,
+  maxRuns: 3,
+  onEnd: (stats) => {
+    console.log('Résumé :', stats);
+  }
+});
+
+jobs.start();
+// Le process s'arrêtera automatiquement à la fin de la dernière tâche périodique.
+```
+
+- Si `autoExit` n'est pas activé, le process continue de tourner normalement.
+- Vous pouvez aussi utiliser le callback global `onAllTasksEnded` pour effectuer des actions à la fin, sans arrêter le process :
+
+```typescript
+jobs.onAllTasksEnded(() => {
+  console.log('Toutes les tâches périodiques sont terminées.');
+});
+```
+
+## Bonnes pratiques
+- **N'activez `autoExit` que pour les scripts ou les tests.**
+- **En production/server, laissez `autoExit` à `false` (par défaut) pour éviter tout arrêt inopiné du process.**
+
+---
+
 ## TaskConfig Interface
 
 BlazeJob supports the following task types and config structures:
 
 ```typescript
-type TaskType = 'fintech' | 'onchain' | 'shell' | 'http';
+type TaskType = 'cosmos';
 
-interface ShellTaskConfig {
-  cmd: string;
-}
-
-interface HttpTaskConfig {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: any;
-}
-
-interface OnchainTaskConfig {
-  rpcUrl?: string; // can be omitted if set in .env
-  privateKey?: string; // can be omitted if set in .env
-  to: string;
-  value: string; // in ETH or wei
-  data?: string;
-  gasLimit?: number;
-}
-
-interface FintechTaskConfig {
-  provider: string;
-  amount: number;
-  currency: string;
-  recipient: string;
-  // ...other fields as needed
+interface CosmosTaskConfig {
+  queryType: 'balance' | 'tx' | 'custom';
+  queryParams?: Record<string, string>;
+  to?: string;
+  amount?: string;
+  denom?: string;
+  mnemonic?: string;
+  chainId?: string;
+  rpcUrl?: string;
 }
 ```
 
@@ -265,194 +274,122 @@ If you set `webhookUrl` when scheduling a task, BlazeJob will POST a JSON payloa
 
 ---
 
-## Quickstart: Send an ETH Transaction (Web3)
+## Exemple : requête simple Cosmos (balance ou tx)
 
-BlazeJob supports onchain tasks using Ethers.js. You can schedule a transaction to be sent on Ethereum (or compatible chains).
+Voici comment utiliser BlazeJob pour exécuter une requête simple sur Cosmos (par exemple, obtenir le solde d'une adresse ou les infos d'une transaction) :
 
-### Example: Schedule an ETH Transfer
+### 1. Query balance (solde)
+```typescript
+import { BlazeJob } from 'blazerjob';
 
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'cosmos',
+  config: JSON.stringify({
+    queryType: 'balance',
+    queryParams: { address: 'cosmos1...' },
+    // rpcUrl peut venir de .env ou être spécifié ici
+  })
+});
+
+jobs.start();
+```
+
+### 2. Query transaction (tx)
+```typescript
+import { BlazeJob } from 'blazerjob';
+
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'cosmos',
+  config: JSON.stringify({
+    queryType: 'tx',
+    queryParams: { hash: '0x...' },
+    // rpcUrl peut venir de .env ou être spécifié ici
+  })
+});
+
+jobs.start();
+```
+
+- Les résultats sont loggés côté serveur (console).
+- Pour une requête personnalisée, utilise `queryType: 'custom'` et adapte `queryParams` selon tes besoins.
+
+---
+
+## Exemple : requête HTTP planifiée (connecteur http)
+
+BlazeJob permet désormais de planifier une requête API HTTP (fetch) :
+
+### Exemple : requête POST simple
+```typescript
+import { BlazeJob } from 'blazerjob';
+
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'http',
+  config: JSON.stringify({
+    url: 'https://httpbin.org/post',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { hello: 'world' }
+  })
+});
+
+jobs.start();
+```
+
+### Exemple : requête GET
 ```typescript
 jobs.schedule(async () => {}, {
-  runAt: new Date(Date.now() + 10000), // 10 seconds from now
-  type: 'onchain',
+  runAt: new Date(),
+  type: 'http',
   config: JSON.stringify({
-    rpcUrl: 'https://mainnet.infura.io/v3/YOUR_INFURA_KEY',
-    privateKey: '0xYOUR_PRIVATE_KEY',
-    to: '0xRecipientAddress',
-    value: '0.01' // ETH
+    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
+    method: 'GET'
   })
 });
 ```
 
-- `rpcUrl`: JSON-RPC endpoint (Infura, Alchemy, etc.)
-- `privateKey`: Sender's private key (keep secure!)
-- `to`: Recipient address
-- `value`: Amount in ETH (can be a string or number)
-- Optional: `data`, `gasLimit`
-
-BlazeJob will send the transaction and wait for confirmation. You can also use webhooks to be notified on success/failure.
-
----
-
-## Advanced Examples
-
-### Recurring Task Every 10 Seconds
-
-```typescript
-jobs.schedule(async () => {
-  // Your recurring logic here
-}, { runAt: new Date(), interval: 10000, type: 'custom' });
-```
-
-### Custom Task with Retry
-
-```typescript
-jobs.schedule(async () => {
-  // Some operation that might fail
-}, { runAt: new Date(), retriesLeft: 3, type: 'custom' });
-```
-
-### Task with Webhook
-
-```typescript
-jobs.schedule(async () => {
-  // ...
-}, {
-  runAt: new Date(),
-  type: 'custom',
-  webhookUrl: 'https://webhook.site/your-url'
-});
-```
-
----
-
-## Best Practices
-
-- Call `jobs.start()` only once per process.
-- Use a unique SQLite database path per BlazeJob instance.
-- For multi-process/task-distributed setups, consider exposing BlazeJob via an HTTP API.
-- Store all secrets and credentials in your `.env` file, never in source code or version control.
-
----
-
-## Extending BlazeJob
-
-- You can integrate BlazeJob into any Node.js/TypeScript backend (Fastify, Express, etc).
-- To support additional task types, extend the logic in the `tick()` method to handle new types and configs.
-- For FinTech or Web3 connectors, use environment variables for credentials and document them in `.env.example`.
-
----
-
-## Example: Integrating BlazeJob in Your Project
+### Exemple : requête GET toutes les 10 secondes avec log de la réponse
 
 ```typescript
 import { BlazeJob } from 'blazerjob';
 
 const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
-jobs.schedule(async () => {
-  console.log('This runs 5 seconds after startup!');
-}, { runAt: new Date(Date.now() + 5000), type: 'custom' });
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  interval: 10000, // toutes les 10 secondes
+  type: 'http',
+  config: JSON.stringify({
+    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
+    method: 'GET'
+  })
+});
 
 jobs.start();
 ```
 
----
-
-## Solana & Email Connectors
-
-BlazeJob supports Solana and Email tasks. Use environment variables to secure your secrets (see `.env.example`).
-
-### Example: Solana Transfer
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'solana',
-  config: JSON.stringify({
-    to: 'SolanaRecipient',
-    lamports: 1000000 // 0.001 SOL
-    // secretKey and rpcUrl can come from .env
-  })
-});
-```
-
-- Required variables in `.env`:
-  - `SOLANA_SECRET_KEY` (base58 secret key)
-  - `SOLANA_RPC_URL` (Solana endpoint)
-
-### Example: Sending Email
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'email',
-  config: JSON.stringify({
-    to: 'user@example.com',
-    subject: 'Hello!',
-    text: 'This is a test email.'
-    // smtpUser, smtpPass, etc. can come from .env
-  })
-});
-```
-
-- Required variables in `.env`:
-  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`
-
-See `.env.example` for the complete list of variables and expected structure.
-
----
-
-## Cosmos (CosmJS) Connector
-
-BlazeJob supports Cosmos tasks via CosmJS. You can send tokens or query the Cosmos blockchain (or any Stargate-compatible chain).
-
-### Example: Sending ATOM Tokens
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'cosmos',
-  config: JSON.stringify({
-    to: 'cosmos1destination...',
-    amount: '100000', // in uatom
-    denom: 'uatom',
-    chainId: 'cosmoshub-4'
-    // mnemonic and rpcUrl can come from .env
-  })
-});
-```
-
-- Required variables in `.env`:
-  - `COSMOS_MNEMONIC` (wallet mnemonic phrase)
-  - `COSMOS_RPC_URL` (Cosmos RPC endpoint)
-
-### Example: Balance or Transaction Query
-```typescript
-// Query balance
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'cosmos',
-  config: JSON.stringify({
-    queryType: 'balance',
-    queryParams: { address: 'cosmos1...' }
-    // rpcUrl can come from .env
-  })
-});
-
-// Query transaction
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'cosmos',
-  config: JSON.stringify({
-    queryType: 'tx',
-    queryParams: { hash: '0x...' }
-    // rpcUrl can come from .env
-  })
-});
-```
-
-- Query results are currently logged server-side (adapt as needed).
-- For other queries, use `queryType: 'custom'` and provide the necessary parameters.
-
-See `.env.example` for the exact structure of Cosmos variables.
+> Pour logguer la réponse côté serveur, modifie la fonction dans le code source :
+>
+> ```typescript
+> taskFn = async () => {
+>   const res = await fetch(cfg.url, {
+>     method: cfg.method ?? 'POST',
+>     headers: cfg.headers,
+>     body: cfg.body ? JSON.stringify(cfg.body) : undefined
+>   });
+>   const text = await res.text();
+>   console.log('[HTTP][response]', text);
+> };
+> ```
 
 ---
 
