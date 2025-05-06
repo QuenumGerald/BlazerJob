@@ -1,6 +1,16 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Database from 'better-sqlite3';
 import fetch from 'node-fetch'; // si node <18
+import { TaskType, TaskConfig, ShellTaskConfig, HttpTaskConfig, OnchainTaskConfig, FintechTaskConfig } from './types';
+import { ethers } from 'ethers';
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import nodemailer from 'nodemailer';
+import bs58 from 'bs58';
+import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
+import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
 
 export class BlazeJob {
   private db: Database.Database;
@@ -79,7 +89,7 @@ export class BlazeJob {
       let taskFn: () => Promise<void>;
       try {
         if (task.type === 'shell' && task.config) {
-          const { cmd } = JSON.parse(task.config);
+          const { cmd } = JSON.parse(task.config) as ShellTaskConfig;
           const { exec } = await import('child_process');
           taskFn = () => new Promise((resolve, reject) => {
             exec(cmd, (error, stdout, stderr) => {
@@ -87,6 +97,123 @@ export class BlazeJob {
               else resolve();
             });
           });
+        } else if (task.type === 'onchain' && task.config) {
+          const cfg = JSON.parse(task.config) as OnchainTaskConfig;
+          const rpcUrl = cfg.rpcUrl || process.env.RPC_URL;
+          const privateKey = cfg.privateKey || process.env.PRIVATE_KEY;
+          if (!rpcUrl) {
+            throw new Error('No rpcUrl provided for onchain task (set in config or .env)');
+          }
+          if (!privateKey) {
+            throw new Error('No privateKey provided for onchain task (set in config or .env)');
+          }
+          taskFn = async () => {
+            const provider = new ethers.JsonRpcProvider(rpcUrl);
+            const wallet = new ethers.Wallet(privateKey, provider);
+            const tx = await wallet.sendTransaction({
+              to: cfg.to,
+              value: ethers.parseEther(cfg.value),
+              data: cfg.data ?? undefined,
+              gasLimit: cfg.gasLimit ?? undefined
+            });
+            await tx.wait();
+          };
+        } else if (task.type === 'http' && task.config) {
+          const cfg = JSON.parse(task.config) as HttpTaskConfig;
+          taskFn = async () => {
+            await fetch(cfg.url, {
+              method: cfg.method ?? 'POST',
+              headers: cfg.headers,
+              body: cfg.body ? JSON.stringify(cfg.body) : undefined
+            });
+          };
+        } else if (task.type === 'fintech' && task.config) {
+          const cfg = JSON.parse(task.config) as FintechTaskConfig;
+          taskFn = async () => {
+            console.log('Fintech task:', cfg);
+            // TODO: call external fintech API here
+          };
+        } else if (task.type === 'solana' && task.config) {
+          const cfg = JSON.parse(task.config);
+          const rpcUrl = cfg.rpcUrl || process.env.SOLANA_RPC_URL;
+          const secretKey = cfg.secretKey || process.env.SOLANA_SECRET_KEY;
+          if (!rpcUrl) throw new Error('No Solana rpcUrl (set in config or .env)');
+          if (!secretKey) throw new Error('No Solana secretKey (set in config or .env)');
+          taskFn = async () => {
+            const connection = new Connection(rpcUrl, 'confirmed');
+            const payer = Keypair.fromSecretKey(bs58.decode(secretKey));
+            const toPubkey = new PublicKey(cfg.to);
+            const tx = new Transaction().add(SystemProgram.transfer({
+              fromPubkey: payer.publicKey,
+              toPubkey,
+              lamports: cfg.lamports
+            }));
+            if (cfg.memo) {
+              // Optionally add memo
+            }
+            await sendAndConfirmTransaction(connection, tx, [payer]);
+          };
+        } else if (task.type === 'email' && task.config) {
+          const cfg = JSON.parse(task.config);
+          const smtpHost = cfg.smtpHost || process.env.SMTP_HOST;
+          const smtpPort = cfg.smtpPort || process.env.SMTP_PORT;
+          const smtpUser = cfg.smtpUser || process.env.SMTP_USER;
+          const smtpPass = cfg.smtpPass || process.env.SMTP_PASS;
+          const from = cfg.from || process.env.EMAIL_FROM;
+          if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !from) {
+            throw new Error('Missing SMTP config for email task');
+          }
+          taskFn = async () => {
+            const transporter = nodemailer.createTransport({
+              host: smtpHost,
+              port: Number(smtpPort),
+              secure: false,
+              auth: { user: smtpUser, pass: smtpPass }
+            });
+            await transporter.sendMail({
+              from,
+              to: cfg.to,
+              subject: cfg.subject,
+              text: cfg.text,
+              html: cfg.html
+            });
+          };
+        } else if (task.type === 'cosmos' && task.config) {
+          const cfg = JSON.parse(task.config);
+          const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
+          const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
+          if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
+          // Broadcast TX
+          if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
+            taskFn = async () => {
+              const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
+              const [account] = await wallet.getAccounts();
+              const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
+              const fee = {
+                amount: coins(cfg.gas || '5000', cfg.denom),
+                gas: cfg.gas || '200000',
+              };
+              const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
+              if (result.code !== 0) throw new Error(result.rawLog);
+              return;
+            };
+          } else if (cfg.queryType) {
+            // Query
+            taskFn = async () => {
+              const client = await StargateClient.connect(rpcUrl);
+              let _res;
+              if (cfg.queryType === 'balance') {
+                _res = await client.getAllBalances(cfg.queryParams?.address);
+              } else if (cfg.queryType === 'tx') {
+                _res = await client.getTx(cfg.queryParams?.hash);
+              } else {
+                throw new Error('Unknown Cosmos queryType');
+              }
+              return;
+            };
+          } else {
+            throw new Error('Invalid Cosmos config: must provide tx params or queryType');
+          }
         } else {
           // Pour d'autres types, à compléter ici
           throw new Error('No handler for type');
@@ -239,6 +366,121 @@ app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
         else resolve();
       });
     });
+  } else if (type === 'onchain' && config) {
+    const cfg = JSON.parse(config) as OnchainTaskConfig;
+    const rpcUrl = cfg.rpcUrl || process.env.RPC_URL;
+    const privateKey = cfg.privateKey || process.env.PRIVATE_KEY;
+    if (!rpcUrl) {
+      throw new Error('No rpcUrl provided for onchain task (set in config or .env)');
+    }
+    if (!privateKey) {
+      throw new Error('No privateKey provided for onchain task (set in config or .env)');
+    }
+    taskFn = async () => {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const wallet = new ethers.Wallet(privateKey, provider);
+      const tx = await wallet.sendTransaction({
+        to: cfg.to,
+        value: ethers.parseEther(cfg.value),
+        data: cfg.data ?? undefined,
+        gasLimit: cfg.gasLimit ?? undefined
+      });
+      await tx.wait();
+    };
+  } else if (type === 'http' && config) {
+    const cfg = JSON.parse(config) as HttpTaskConfig;
+    taskFn = async () => {
+      await fetch(cfg.url, {
+        method: cfg.method ?? 'POST',
+        headers: cfg.headers,
+        body: cfg.body ? JSON.stringify(cfg.body) : undefined
+      });
+    };
+  } else if (type === 'fintech' && config) {
+    const cfg = JSON.parse(config) as FintechTaskConfig;
+    taskFn = async () => {
+      console.log('Fintech task:', cfg);
+      // TODO: call external fintech API here
+    };
+  } else if (type === 'solana' && config) {
+    const cfg = JSON.parse(config);
+    const rpcUrl = cfg.rpcUrl || process.env.SOLANA_RPC_URL;
+    const secretKey = cfg.secretKey || process.env.SOLANA_SECRET_KEY;
+    if (!rpcUrl) throw new Error('No Solana rpcUrl (set in config or .env)');
+    if (!secretKey) throw new Error('No Solana secretKey (set in config or .env)');
+    taskFn = async () => {
+      const connection = new Connection(rpcUrl, 'confirmed');
+      const payer = Keypair.fromSecretKey(bs58.decode(secretKey));
+      const toPubkey = new PublicKey(cfg.to);
+      const tx = new Transaction().add(SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey,
+        lamports: cfg.lamports
+      }));
+      if (cfg.memo) {
+        // Optionally add memo
+      }
+      await sendAndConfirmTransaction(connection, tx, [payer]);
+    };
+  } else if (type === 'email' && config) {
+    const cfg = JSON.parse(config);
+    const smtpHost = cfg.smtpHost || process.env.SMTP_HOST;
+    const smtpPort = cfg.smtpPort || process.env.SMTP_PORT;
+    const smtpUser = cfg.smtpUser || process.env.SMTP_USER;
+    const smtpPass = cfg.smtpPass || process.env.SMTP_PASS;
+    const from = cfg.from || process.env.EMAIL_FROM;
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !from) {
+      throw new Error('Missing SMTP config for email task');
+    }
+    taskFn = async () => {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: Number(smtpPort),
+        secure: false,
+        auth: { user: smtpUser, pass: smtpPass }
+      });
+      await transporter.sendMail({
+        from,
+        to: cfg.to,
+        subject: cfg.subject,
+        text: cfg.text,
+        html: cfg.html
+      });
+    };
+  } else if (type === 'cosmos' && config) {
+    const cfg = JSON.parse(config);
+    const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
+    const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
+    if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
+    if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
+      taskFn = async () => {
+        const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
+        const [account] = await wallet.getAccounts();
+        const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
+        const fee = {
+          amount: coins(cfg.gas || '5000', cfg.denom),
+          gas: cfg.gas || '200000',
+        };
+        const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
+        if (result.code !== 0) throw new Error(result.rawLog);
+        return;
+      };
+    } else if (cfg.queryType) {
+      taskFn = async () => {
+        const client = await StargateClient.connect(rpcUrl);
+        let _res;
+        if (cfg.queryType === 'balance') {
+          _res = await client.getAllBalances(cfg.queryParams?.address);
+        } else if (cfg.queryType === 'tx') {
+          _res = await client.getTx(cfg.queryParams?.hash);
+        } else {
+          throw new Error('Unknown Cosmos queryType');
+        }
+        return;
+      };
+    } else {
+      throw new Error('Invalid Cosmos config: must provide tx params or queryType');
+    }
   } else {
     // Par défaut, tâche factice
     taskFn = async () => {
