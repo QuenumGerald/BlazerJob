@@ -12,26 +12,7 @@ import * as nodemailer from 'nodemailer';
 import * as bs58 from 'bs58';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
-
-function makeCosmosTaskFn(cfg: any) {
-  return async () => {
-    const { queryType, queryParams } = cfg;
-    console.log('[Cosmos] queryType:', queryType, 'queryParams:', queryParams);
-    if (!queryType || !queryParams || !queryParams.address) throw new Error('Invalid Cosmos config: missing address');
-    const { StargateClient } = require("@cosmjs/stargate");
-    const rpcEndpoint = process.env.COSMOS_RPC_URL;
-    const client = await StargateClient.connect(rpcEndpoint);
-    if (queryType === 'balance') {
-      const balance = await client.getAllBalances(queryParams.address);
-      console.log('[Cosmos][balance]', balance);
-    } else if (queryType === 'txs') {
-      const txs = await client.searchTx(queryParams);
-      console.log('[Cosmos][txs]', txs);
-    } else {
-      throw new Error('Unknown Cosmos query type: ' + queryType);
-    }
-  };
-}
+import { makeCosmosTaskFn } from './cosmos/queries';
 
 export class BlazeJob {
   private db: any;
@@ -81,7 +62,7 @@ export class BlazeJob {
   }
 
   private async tick() {
-    console.log('[BlazeJob] tick');
+    // console.log('[BlazeJob] tick');
     type TaskRow = {
       id: number;
       runAt: string;
@@ -120,23 +101,7 @@ export class BlazeJob {
           if (typeof configCopy === 'string') {
             configCopy = JSON.parse(configCopy);
           }
-          taskFn = async () => {
-            const { queryType, queryParams } = configCopy;
-            console.log('[Cosmos] queryType:', queryType, 'queryParams:', queryParams);
-            if (!queryType || !queryParams || !queryParams.address) throw new Error('Invalid Cosmos config: missing address');
-            const { StargateClient } = require("@cosmjs/stargate");
-            const rpcEndpoint = process.env.COSMOS_RPC_URL;
-            const client = await StargateClient.connect(rpcEndpoint);
-            if (queryType === 'balance') {
-              const balance = await client.getAllBalances(queryParams.address);
-              console.log('[Cosmos][balance]', balance);
-            } else if (queryType === 'txs') {
-              const txs = await client.searchTx(queryParams);
-              console.log('[Cosmos][txs]', txs);
-            } else {
-              throw new Error('Unknown Cosmos query type: ' + queryType);
-            }
-          };
+          taskFn = makeCosmosTaskFn(configCopy);
           console.log('[BlazeJob] taskFn Cosmos construit pour la tâche', task.id);
         } else {
           console.log('[BlazeJob] Tâche non Cosmos, type:', task.type, 'id:', task.id);
@@ -148,7 +113,19 @@ export class BlazeJob {
         this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
       } catch (err) {
         console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
-        this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
+        // --- Ajout gestion retry ---
+        if (task.retriesLeft && task.retriesLeft > 0) {
+          // Décalage du prochain essai avec un backoff exponentiel simple
+          const baseDelay = 2000; // 2 secondes de base
+          const retryCount = (typeof task.retriesLeft === 'number') ? task.retriesLeft : 0;
+          const nextDelay = baseDelay * Math.pow(2, Math.max(0, 3 - retryCount)); // Plus il reste de retries, plus le backoff est court
+          const nextRunAt = new Date(Date.now() + nextDelay).toISOString();
+          this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ?, retriesLeft = retriesLeft - 1, lastError = ? WHERE id = ?`).run(nextRunAt, String(err), task.id);
+          console.warn(`[BlazeJob] Retry de la tâche ${task.id} dans ${nextDelay}ms (retriesLeft=${task.retriesLeft - 1})`);
+        } else {
+          this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
+        }
+        // --- Fin ajout gestion retry ---
       }
     }
   }
@@ -162,6 +139,57 @@ export class BlazeJob {
       });
     } catch (e) {
       // Optionnel : log ou ignorer
+    }
+  }
+
+  /**
+   * Programme nativement plusieurs requêtes Cosmos d'un coup.
+   * @param opts
+   *   - count: nombre de requêtes à programmer
+   *   - address: adresse Cosmos cible
+   *   - queryType: type de requête ('balance', 'tx', ...)
+   *   - intervalMs: intervalle entre chaque tâche (ms, défaut 100)
+   *   - configOverrides: options avancées (optionnel)
+   *   - retriesLeft, priority, runAt, webhookUrl (optionnel)
+   */
+  public async scheduleManyCosmosQueries(opts: {
+    count: number;
+    address: string;
+    queryType: string;
+    intervalMs?: number;
+    configOverrides?: Record<string, any>;
+    retriesLeft?: number;
+    priority?: number;
+    runAt?: Date | string;
+    webhookUrl?: string;
+  }) {
+    const {
+      count,
+      address,
+      queryType,
+      intervalMs = 100,
+      configOverrides = {},
+      retriesLeft = 0,
+      priority = 0,
+      runAt,
+      webhookUrl
+    } = opts;
+    for (let i = 0; i < count; i++) {
+      const scheduledAt = runAt
+        ? (runAt instanceof Date ? new Date(runAt.getTime() + i * intervalMs) : new Date(new Date(runAt).getTime() + i * intervalMs))
+        : new Date(Date.now() + i * intervalMs);
+      this.schedule(async () => {}, {
+        type: 'cosmos',
+        runAt: scheduledAt,
+        priority,
+        retriesLeft,
+        webhookUrl,
+        config: {
+          queryType,
+          queryParams: { address },
+          ...configOverrides
+        }
+      });
     }
   }
 

@@ -147,3 +147,4 @@ dist
 
 # db
 blazerjob.db
+*.db

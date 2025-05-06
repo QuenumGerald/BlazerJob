@@ -1,7 +1,109 @@
 # BlazeJob – Task Scheduler Library
 
 **BlazeJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
-You can use it as a library in your own code to schedule, execute, and manage asynchronous tasks. Supports HTTP webhooks for notification on task completion or failure.
+Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
+
+## 🚀 Quick Start
+
+### Installation
+```bash
+npm install blazerjob
+# or
+yarn add blazerjob
+```
+
+### Basic Example
+```typescript
+import { BlazeJob } from 'blazerjob';
+
+// Initialize with SQLite database
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+// Schedule a simple task
+jobs.schedule(async () => {
+  console.log('Task executed at', new Date().toISOString());
+}, { 
+  runAt: new Date(Date.now() + 5000), // Run in 5 seconds
+  type: 'custom',
+  config: { note: 'My first task' }
+});
+
+// Start the scheduler
+jobs.start();
+```
+
+### Cosmos Example
+```typescript
+import { scheduleManyCosmosQueries } from 'blazerjob/cosmos';
+
+// Schedule multiple Cosmos queries
+await scheduleManyCosmosQueries(job, {
+  addresses: ['cosmos1...', 'cosmos1...'],
+  count: 10,
+  queryType: 'balance',
+  intervalMs: 1000,
+  webhookUrl: 'https://your-webhook.com/endpoint'
+});
+```
+
+## CLI
+
+BlazeJob provides a CLI to easily manage your scheduled tasks:
+
+```bash
+# Show help
+npx ts-node src/bin/cli.ts help
+
+# Schedule a task (e.g., shell)
+npx ts-node src/bin/cli.ts schedule --type shell --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
+
+# List tasks (default blazerjob.db)
+npx ts-node src/bin/cli.ts list
+
+# List tasks from ALL .db files in the current directory
+ts-node src/bin/cli.ts list-all
+
+# Delete a task
+npx ts-node src/bin/cli.ts delete 123
+```
+
+### Available Commands
+
+#### `list-all`
+Displays tasks from all `.db` files in the current directory, with separate sections for each database.
+
+**Example Output:**
+```
+=== Database: blazerjob.db ===
+┌─────────┬────┬─────────┬────────────────────────────┬──────────┬─────────────────────────────┐
+│ (index) │ id │  type   │           runAt            │  status  │          config             │
+├─────────┼────┼─────────┼────────────────────────────┼──────────┼─────────────────────────────┤
+│    0    │ 1  │ 'shell' │ '2025-05-05T21:24:13.727Z' │ 'failed' │ '{"cmd":"echo test"}'       │
+└─────────┴────┴─────────┴────────────────────────────┴──────────┴─────────────────────────────┘
+
+=== Database: tasks_cosmos_query.db ===
+┌─────────┬────┬──────────┬────────────────────────────┬──────────┬─────────────────────────────────────┐
+│ (index) │ id │   type   │           runAt            │  status  │              config                 │
+├─────────┼────┼──────────┼────────────────────────────┼──────────┼─────────────────────────────────────┤
+│    0    │ 42 │ 'cosmos' │ '2025-05-06T02:21:28.275Z' │ 'failed' │ '{"queryType":"balance",...}'     │
+└─────────┴────┴──────────┴────────────────────────────┴──────────┴─────────────────────────────────────┘
+```
+
+#### `list`
+Shows tasks only from the default database (`blazerjob.db`).
+
+#### `schedule`
+Schedules a new task. Available options:
+- `--type`: Task type (`shell`, `cosmos`, etc.)
+- `--cmd`: Command to execute (for shell tasks)
+- `--runAt`: Execution time (default: now)
+- `--interval`: Repeat interval in ms (optional)
+- `--priority`: Task priority (optional)
+- `--retriesLeft`: Number of retry attempts (optional)
+- `--webhookUrl`: Webhook URL for notifications (optional)
+
+#### `delete <id>`
+Deletes a task by its ID.
 
 ---
 
@@ -257,48 +359,28 @@ jobs.start();
 
 ---
 
-## CLI (Optional)
-
-BlazeJob also provides a CLI for quick task scheduling and management. After installing globally:
-
-```bash
-npm install -g blazerjob
-```
-
-You can use:
-
-```bash
-blazerjob schedule --type shell --cmd "echo hello" --webhookUrl "https://webhook.site/your-url"
-blazerjob list
-blazerjob delete <id>
-```
-
-The CLI works with the same SQLite database as the library.
-
----
-
 ## Solana & Email Connectors
 
-BlazeJob prend en charge les tâches Solana et Email. Utilisez les variables d'environnement pour sécuriser vos secrets (voir `.env.example`).
+BlazeJob supports Solana and Email tasks. Use environment variables to secure your secrets (see `.env.example`).
 
-### Exemple : Transfert Solana
+### Example: Solana Transfer
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
   type: 'solana',
   config: JSON.stringify({
-    to: 'DestinataireSolana',
+    to: 'SolanaRecipient',
     lamports: 1000000 // 0.001 SOL
-    // secretKey et rpcUrl peuvent venir du .env
+    // secretKey and rpcUrl can come from .env
   })
 });
 ```
 
-- Variables requises dans `.env` :
-  - `SOLANA_SECRET_KEY` (clé secrète base58)
-  - `SOLANA_RPC_URL` (endpoint Solana)
+- Required variables in `.env`:
+  - `SOLANA_SECRET_KEY` (base58 secret key)
+  - `SOLANA_RPC_URL` (Solana endpoint)
 
-### Exemple : Envoi d'Email
+### Example: Sending Email
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -306,43 +388,43 @@ jobs.schedule(async () => {}, {
   config: JSON.stringify({
     to: 'user@example.com',
     subject: 'Hello!',
-    text: 'Ceci est un test.'
-    // smtpUser, smtpPass, etc. peuvent venir du .env
+    text: 'This is a test email.'
+    // smtpUser, smtpPass, etc. can come from .env
   })
 });
 ```
 
-- Variables requises dans `.env` :
+- Required variables in `.env`:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`
 
-Voir `.env.example` pour le détail des variables et la structure attendue.
+See `.env.example` for the complete list of variables and expected structure.
 
 ---
 
 ## Cosmos (CosmJS) Connector
 
-BlazeJob prend en charge les tâches Cosmos via CosmJS. Vous pouvez envoyer des tokens ou interroger la blockchain Cosmos (ou toute chaîne compatible Stargate).
+BlazeJob supports Cosmos tasks via CosmJS. You can send tokens or query the Cosmos blockchain (or any Stargate-compatible chain).
 
-### Exemple : Envoi de tokens ATOM
+### Example: Sending ATOM Tokens
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
   type: 'cosmos',
   config: JSON.stringify({
     to: 'cosmos1destination...',
-    amount: '100000', // en uatom
+    amount: '100000', // in uatom
     denom: 'uatom',
     chainId: 'cosmoshub-4'
-    // mnemonic et rpcUrl peuvent venir du .env
+    // mnemonic and rpcUrl can come from .env
   })
 });
 ```
 
-- Variables requises dans `.env` :
-  - `COSMOS_MNEMONIC` (phrase mnémonique du wallet)
-  - `COSMOS_RPC_URL` (endpoint RPC Cosmos)
+- Required variables in `.env`:
+  - `COSMOS_MNEMONIC` (wallet mnemonic phrase)
+  - `COSMOS_RPC_URL` (Cosmos RPC endpoint)
 
-### Exemple : Requête balance ou transaction
+### Example: Balance or Transaction Query
 ```typescript
 // Query balance
 jobs.schedule(async () => {}, {
@@ -351,7 +433,7 @@ jobs.schedule(async () => {}, {
   config: JSON.stringify({
     queryType: 'balance',
     queryParams: { address: 'cosmos1...' }
-    // rpcUrl peut venir du .env
+    // rpcUrl can come from .env
   })
 });
 
@@ -362,15 +444,109 @@ jobs.schedule(async () => {}, {
   config: JSON.stringify({
     queryType: 'tx',
     queryParams: { hash: '0x...' }
-    // rpcUrl peut venir du .env
+    // rpcUrl can come from .env
   })
 });
 ```
 
-- Les résultats des queries sont actuellement loggés côté serveur (adaptez selon vos besoins).
-- Pour d'autres queries, utilisez `queryType: 'custom'` et fournissez les paramètres nécessaires.
+- Query results are currently logged server-side (adapt as needed).
+- For other queries, use `queryType: 'custom'` and provide the necessary parameters.
 
-Voir `.env.example` pour la structure exacte des variables Cosmos.
+See `.env.example` for the exact structure of Cosmos variables.
+
+---
+
+## Cosmos Module: Centralized Logic
+
+BlazeJob centralizes all Cosmos blockchain logic in the `src/cosmos/` module. This module exposes helpers for scheduling, querying, and sending tokens on Cosmos chains (CosmJS-compatible).
+
+### Features
+- **Batch scheduling**: Schedule hundreds of Cosmos queries or transactions in one call.
+- **Unified helpers**: Query balances, transactions, and send tokens using a simple API.
+- **Environment support**: Cosmos mnemonic and RPC URL can be set in `.env` or provided per task.
+- **Error handling**: Centralized error helpers for Cosmos-specific issues (rate limits, etc).
+- **TypeScript-first**: All helpers are typed for safe use.
+
+### Example: Batch Cosmos Queries
+```typescript
+import { BlazeJob } from 'blazerjob';
+import { scheduleManyCosmosQueries } from './src/cosmos';
+
+const job = new BlazeJob({ dbPath: './tasks.db' });
+
+await scheduleManyCosmosQueries(job, {
+  addresses: [
+    'cosmos1fl48vsnmsdzcv85q5d2q4z5ajdha8yu34mf0eh',
+    'cosmos1c9ye9j3p4e9w8f7j2k7l6k8e8f7g9h5d3j8k7h',
+  ],
+  count: 100,
+  queryType: 'balance',
+  intervalMs: 100,
+});
+job.start();
+```
+
+### Example: Query Cosmos Balance or Transaction
+```typescript
+import { getBalance, getTx } from './src/cosmos';
+
+const balances = await getBalance(process.env.COSMOS_RPC_URL, 'cosmos1...');
+const tx = await getTx(process.env.COSMOS_RPC_URL, '0x...');
+```
+
+### Example: Send Tokens on Cosmos
+```typescript
+import { sendTokens } from './src/cosmos';
+
+await sendTokens({
+  rpcUrl: process.env.COSMOS_RPC_URL,
+  mnemonic: process.env.COSMOS_MNEMONIC,
+  to: 'cosmos1destination...',
+  amount: '100000',
+  denom: 'uatom',
+  chainId: 'cosmoshub-4',
+});
+```
+
+### Environment Variables
+- `COSMOS_MNEMONIC` – Cosmos wallet mnemonic
+- `COSMOS_RPC_URL` – Cosmos RPC endpoint
+
+See `.env.example` for details.
+
+---
+
+## Cosmos Helpers (API)
+
+BlazeJob exposes various Cosmos helpers in `src/cosmos/queries.ts`:
+
+- `getBalance(rpcUrl, address)`: Gets the balance of an address
+- `getTx(rpcUrl, hash)`: Retrieves a transaction by hash
+- `sendTokens({rpcUrl, mnemonic, to, amount, denom, ...})`: Sends ATOM or other tokens
+- `getLatestBlockHeight(rpcUrl)`: Gets the latest block height
+- `getBlockByHeight(rpcUrl, height)`: Gets block details by height
+- `getAccountInfo(rpcUrl, address)`: Gets account info (account number, sequence, ...)
+- `getAllBalances(rpcUrl, address)`: Gets all balances for an address
+- `getChainId(rpcUrl)`: Gets the chain ID
+- `getTransactionByHash(rpcUrl, hash)`: Alias for `getTx`
+- `searchTxs(rpcUrl, query)`: Searches transactions (by address, event, ...)
+- `broadcastTx(rpcUrl, txBytes)`: Broadcasts a signed transaction
+- `getDelegation(rpcUrl, delegator, validator)`: Gets specific staking delegation
+
+> Some advanced queries (validators, supply, node info) require a REST/LCD endpoint (not included in StargateClient, see cosmjs/launchpad/lcd or fetch).
+
+#### Advanced Usage Example
+```typescript
+import {
+  getBalance, getTx, sendTokens, getLatestBlockHeight, getBlockByHeight,
+  getAccountInfo, getAllBalances, getChainId, getTransactionByHash, searchTxs,
+  broadcastTx, getDelegation
+} from './src/cosmos';
+
+const balances = await getAllBalances(process.env.COSMOS_RPC_URL, 'cosmos1...');
+const block = await getBlockByHeight(process.env.COSMOS_RPC_URL, 1234567);
+const delegation = await getDelegation(process.env.COSMOS_RPC_URL, 'cosmos1delegator...', 'cosmosvaloper1validator...');
+```
 
 ---
 
