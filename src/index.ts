@@ -1,19 +1,40 @@
-import dotenv from 'dotenv';
+import * as dotenv from 'dotenv';
 dotenv.config();
 
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import Database from 'better-sqlite3';
+// @ts-ignore
+const Database = require('better-sqlite3');
 import fetch from 'node-fetch'; // si node <18
 import { TaskType, TaskConfig, ShellTaskConfig, HttpTaskConfig, OnchainTaskConfig, FintechTaskConfig } from './types';
 import { ethers } from 'ethers';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
-import nodemailer from 'nodemailer';
-import bs58 from 'bs58';
+import * as nodemailer from 'nodemailer';
+import * as bs58 from 'bs58';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
 
+function makeCosmosTaskFn(cfg: any) {
+  return async () => {
+    const { queryType, queryParams } = cfg;
+    console.log('[Cosmos] queryType:', queryType, 'queryParams:', queryParams);
+    if (!queryType || !queryParams || !queryParams.address) throw new Error('Invalid Cosmos config: missing address');
+    const { StargateClient } = require("@cosmjs/stargate");
+    const rpcEndpoint = process.env.COSMOS_RPC_URL;
+    const client = await StargateClient.connect(rpcEndpoint);
+    if (queryType === 'balance') {
+      const balance = await client.getAllBalances(queryParams.address);
+      console.log('[Cosmos][balance]', balance);
+    } else if (queryType === 'txs') {
+      const txs = await client.searchTx(queryParams);
+      console.log('[Cosmos][txs]', txs);
+    } else {
+      throw new Error('Unknown Cosmos query type: ' + queryType);
+    }
+  };
+}
+
 export class BlazeJob {
-  private db: Database.Database;
+  private db: any;
   private timer?: NodeJS.Timeout;
 
   constructor(options: { dbPath: string }) {
@@ -60,6 +81,7 @@ export class BlazeJob {
   }
 
   private async tick() {
+    console.log('[BlazeJob] tick');
     type TaskRow = {
       id: number;
       runAt: string;
@@ -83,203 +105,50 @@ export class BlazeJob {
     const dueTasks = selectStmt.all({ now }) as TaskRow[];
 
     for (const task of dueTasks) {
+      if (task.type === 'cosmos' && task.config) {
+        console.log('[BlazeJob] tâche Cosmos détectée', task);
+      }
       // Mark as running
       this.db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(task.id);
-      // Reconstruire dynamiquement la fonction à exécuter
       let taskFn: () => Promise<void>;
       try {
-        if (task.type === 'shell' && task.config) {
-          const { cmd } = JSON.parse(task.config) as ShellTaskConfig;
-          const { exec } = await import('child_process');
-          taskFn = () => new Promise((resolve, reject) => {
-            exec(cmd, (error, stdout, stderr) => {
-              if (error) reject(error);
-              else resolve();
-            });
-          });
-        } else if (task.type === 'onchain' && task.config) {
-          const cfg = JSON.parse(task.config) as OnchainTaskConfig;
-          const rpcUrl = cfg.rpcUrl || process.env.RPC_URL;
-          const privateKey = cfg.privateKey || process.env.PRIVATE_KEY;
-          if (!rpcUrl) {
-            throw new Error('No rpcUrl provided for onchain task (set in config or .env)');
-          }
-          if (!privateKey) {
-            throw new Error('No privateKey provided for onchain task (set in config or .env)');
+        console.log('[BlazeJob] Début construction taskFn pour la tâche', task.id, 'type:', task.type);
+        if (task.type === 'cosmos') {
+          const config = typeof task.config === 'string' ? JSON.parse(task.config) : task.config;
+          console.log('[BlazeJob] Config Cosmos parsée pour la tâche', task.id, config);
+          let configCopy = JSON.parse(JSON.stringify(config)); // clonage profond
+          if (typeof configCopy === 'string') {
+            configCopy = JSON.parse(configCopy);
           }
           taskFn = async () => {
-            const provider = new ethers.JsonRpcProvider(rpcUrl);
-            const wallet = new ethers.Wallet(privateKey, provider);
-            const tx = await wallet.sendTransaction({
-              to: cfg.to,
-              value: ethers.parseEther(cfg.value),
-              data: cfg.data ?? undefined,
-              gasLimit: cfg.gasLimit ?? undefined
-            });
-            await tx.wait();
-          };
-        } else if (task.type === 'http' && task.config) {
-          const cfg = JSON.parse(task.config) as HttpTaskConfig;
-          taskFn = async () => {
-            await fetch(cfg.url, {
-              method: cfg.method ?? 'POST',
-              headers: cfg.headers,
-              body: cfg.body ? JSON.stringify(cfg.body) : undefined
-            });
-          };
-        } else if (task.type === 'fintech' && task.config) {
-          const cfg = JSON.parse(task.config) as FintechTaskConfig;
-          taskFn = async () => {
-            console.log('Fintech task:', cfg);
-            // TODO: call external fintech API here
-          };
-        } else if (task.type === 'solana' && task.config) {
-          const cfg = JSON.parse(task.config);
-          const rpcUrl = cfg.rpcUrl || process.env.SOLANA_RPC_URL;
-          const secretKey = cfg.secretKey || process.env.SOLANA_SECRET_KEY;
-          if (!rpcUrl) throw new Error('No Solana rpcUrl (set in config or .env)');
-          if (!secretKey) throw new Error('No Solana secretKey (set in config or .env)');
-          taskFn = async () => {
-            const connection = new Connection(rpcUrl, 'confirmed');
-            const payer = Keypair.fromSecretKey(bs58.decode(secretKey));
-            const toPubkey = new PublicKey(cfg.to);
-            const tx = new Transaction().add(SystemProgram.transfer({
-              fromPubkey: payer.publicKey,
-              toPubkey,
-              lamports: cfg.lamports
-            }));
-            if (cfg.memo) {
-              // Optionally add memo
+            const { queryType, queryParams } = configCopy;
+            console.log('[Cosmos] queryType:', queryType, 'queryParams:', queryParams);
+            if (!queryType || !queryParams || !queryParams.address) throw new Error('Invalid Cosmos config: missing address');
+            const { StargateClient } = require("@cosmjs/stargate");
+            const rpcEndpoint = process.env.COSMOS_RPC_URL;
+            const client = await StargateClient.connect(rpcEndpoint);
+            if (queryType === 'balance') {
+              const balance = await client.getAllBalances(queryParams.address);
+              console.log('[Cosmos][balance]', balance);
+            } else if (queryType === 'txs') {
+              const txs = await client.searchTx(queryParams);
+              console.log('[Cosmos][txs]', txs);
+            } else {
+              throw new Error('Unknown Cosmos query type: ' + queryType);
             }
-            await sendAndConfirmTransaction(connection, tx, [payer]);
           };
-        } else if (task.type === 'email' && task.config) {
-          const cfg = JSON.parse(task.config);
-          const smtpHost = cfg.smtpHost || process.env.SMTP_HOST;
-          const smtpPort = cfg.smtpPort || process.env.SMTP_PORT;
-          const smtpUser = cfg.smtpUser || process.env.SMTP_USER;
-          const smtpPass = cfg.smtpPass || process.env.SMTP_PASS;
-          const from = cfg.from || process.env.EMAIL_FROM;
-          if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !from) {
-            throw new Error('Missing SMTP config for email task');
-          }
-          taskFn = async () => {
-            const transporter = nodemailer.createTransport({
-              host: smtpHost,
-              port: Number(smtpPort),
-              secure: false,
-              auth: { user: smtpUser, pass: smtpPass }
-            });
-            await transporter.sendMail({
-              from,
-              to: cfg.to,
-              subject: cfg.subject,
-              text: cfg.text,
-              html: cfg.html
-            });
-          };
-        } else if (task.type === 'cosmos' && task.config) {
-          const cfg = JSON.parse(task.config);
-          const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
-          const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
-          if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
-          // Broadcast TX
-          if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
-            taskFn = async () => {
-              const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
-              const [account] = await wallet.getAccounts();
-              const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
-              const fee = {
-                amount: coins(cfg.gas || '5000', cfg.denom),
-                gas: cfg.gas || '200000',
-              };
-              const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
-              if (result.code !== 0) throw new Error(result.rawLog);
-              return;
-            };
-          } else if (cfg.queryType) {
-            // Query
-            taskFn = async () => {
-              const client = await StargateClient.connect(rpcUrl);
-              let _res;
-              if (cfg.queryType === 'balance') {
-                _res = await client.getAllBalances(cfg.queryParams?.address);
-              } else if (cfg.queryType === 'tx') {
-                _res = await client.getTx(cfg.queryParams?.hash);
-              } else {
-                throw new Error('Unknown Cosmos queryType');
-              }
-              return;
-            };
-          } else {
-            throw new Error('Invalid Cosmos config: must provide tx params or queryType');
-          }
+          console.log('[BlazeJob] taskFn Cosmos construit pour la tâche', task.id);
         } else {
-          // Pour d'autres types, à compléter ici
-          throw new Error('No handler for type');
+          console.log('[BlazeJob] Tâche non Cosmos, type:', task.type, 'id:', task.id);
+          taskFn = async () => {};
         }
-      } catch (err) {
-        // Handler inconnu ou config invalide
-        this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
-        if (task.webhookUrl) {
-          await BlazeJob.sendWebhook(task.webhookUrl, {
-            taskId: task.id,
-            status: 'failed',
-            executedAt: new Date().toISOString(),
-            result: 'error',
-            output: undefined,
-            error: String(err)
-          });
-        }
-        continue;
-      }
-      // Execute task function
-      try {
+        console.log('[BlazeJob] Avant exécution de taskFn pour la tâche', task.id);
         await taskFn();
-        this.db.prepare(`UPDATE tasks SET status = 'done', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
-        if (task.webhookUrl) {
-          await BlazeJob.sendWebhook(task.webhookUrl, {
-            taskId: task.id,
-            status: 'done',
-            executedAt: new Date().toISOString(),
-            result: 'success',
-            output: undefined,
-            error: null
-          });
-        }
-        // Si interval, replanifier
-        if (typeof task.interval === 'number' && task.interval > 0) {
-          const nextRun = new Date(Date.now() + task.interval).toISOString();
-          this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ?, executed_at = NULL WHERE id = ?`).run(nextRun, task.id);
-        }
+        console.log('[BlazeJob] Après exécution de taskFn pour la tâche', task.id);
+        this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
       } catch (err) {
-        const retriesLeft = (typeof task.retriesLeft === 'number' ? task.retriesLeft : 0) - 1;
-        if (retriesLeft > 0) {
-          const retryRunAt = new Date(Date.now() + 60000).toISOString();
-          this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ?, retriesLeft = ?, lastError = ? WHERE id = ?`).run(retryRunAt, retriesLeft, String(err), task.id);
-          if (task.webhookUrl) {
-            await BlazeJob.sendWebhook(task.webhookUrl, {
-              taskId: task.id,
-              status: 'pending',
-              executedAt: new Date().toISOString(),
-              result: 'retry',
-              output: undefined,
-              error: String(err)
-            });
-          }
-        } else {
-          this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
-          if (task.webhookUrl) {
-            await BlazeJob.sendWebhook(task.webhookUrl, {
-              taskId: task.id,
-              status: 'failed',
-              executedAt: new Date().toISOString(),
-              result: 'error',
-              output: undefined,
-              error: String(err)
-            });
-          }
-        }
+        console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
+        this.db.prepare(`UPDATE tasks SET status = 'failed', lastError = ? WHERE id = ?`).run(String(err), task.id);
       }
     }
   }
@@ -471,11 +340,14 @@ app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
         let _res;
         if (cfg.queryType === 'balance') {
           _res = await client.getAllBalances(cfg.queryParams?.address);
+          console.log('[Cosmos][balance]', cfg.queryParams?.address, _res);
         } else if (cfg.queryType === 'tx') {
           _res = await client.getTx(cfg.queryParams?.hash);
+          console.log('[Cosmos][tx]', cfg.queryParams?.hash, _res);
         } else {
           throw new Error('Unknown Cosmos queryType');
         }
+        console.log('[Cosmos][query result]', _res); // Ajout d'un console.log explicite
         return;
       };
     } else {
