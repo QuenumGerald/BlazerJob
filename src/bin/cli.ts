@@ -33,8 +33,9 @@ async function main() {
       const interval = opts.interval ? Number(opts.interval) : undefined;
       const priority = opts.priority ? Number(opts.priority) : undefined;
       const retriesLeft = opts.retriesLeft ? Number(opts.retriesLeft) : undefined;
+      const webhookUrl = opts.webhookUrl;
       const taskFn = async () => {};
-      const id = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type: opts.type, config });
+      const id = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type: opts.type, config, webhookUrl });
       console.log(`Task scheduled with id: ${id}`);
       break;
     }
@@ -50,7 +51,6 @@ async function main() {
         return process.exit(1);
       }
       jobs['db'].prepare('DELETE FROM tasks WHERE id = ?').run(id);
-      jobs['taskMap'].delete(Number(id));
       console.log(`Task ${id} deleted.`);
       break;
     }
