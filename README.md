@@ -3,19 +3,91 @@
 **BlazeJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
-# ⚠️ Connecteurs supportés
+# ⚠️ Supported Connectors
 
-Depuis la version actuelle, **BlazeJob** ne supporte plus que le connecteur Cosmos. Tous les autres connecteurs (Solana, Onchain/Ethereum, Email, HTTP, Shell, Fintech) sont désactivés ou non maintenus. Toute tâche autre que Cosmos sera simplement loggée côté serveur, sans effet réel.
+BlazeJob currently supports only the following connectors for actual execution:
 
-## Cosmos uniquement
+| Connector Type | Status         | Description                                                      |
+|---------------|---------------|------------------------------------------------------------------|
+| `cosmos`      | Supported     | Send tokens, query balances/transactions, batch Cosmos queries    |
+| `http`        | Supported     | Generic HTTP requests (GET, POST, etc.)                          |
+| `shell`       | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `onchain`     | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `solana`      | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `email`       | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `fintech`     | Not supported | Present in types, but not executed (ignored/logged only)         |
 
-- **Type accepté** : `cosmos`
-- **Fonctionnalités** :
-  - Envoi de tokens (sendTokens)
-  - Requêtes de solde (balance), transactions (tx), et requêtes personnalisées (custom)
-  - Batch de requêtes Cosmos via `scheduleManyCosmosQueries`
+> Only tasks of type `cosmos` and `http` are actually executed by BlazeJob. All other types are reserved for future extensions or compatibility, but are currently ignored or simply logged by the server.
 
-### Exemple de tâche Cosmos
+## 1. Custom Tasks (Arbitrary JavaScript/TypeScript)
+
+BlazeJob can schedule and execute any custom asynchronous JavaScript/TypeScript function. This is the most flexible way to use the scheduler, and is ideal for business logic, scripts, or workflows that don't fit a predefined connector.
+
+### Example: Custom Task
+```typescript
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+jobs.schedule(async () => {
+  // Your custom logic here
+  console.log('Hello from a custom task!');
+  // You can use any Node.js/TypeScript code
+}, {
+  runAt: new Date(),
+  interval: 5000, // optional: repeat every 5 seconds
+  maxRuns: 3,     // optional: stop after 3 executions
+  onEnd: (stats) => {
+    console.log('Task finished. Stats:', stats);
+  }
+});
+
+jobs.start();
+```
+
+---
+
+## 2. HTTP Tasks (API Calls)
+
+BlazeJob natively supports HTTP tasks for scheduling API calls (GET, POST, etc.).
+
+### Example: HTTP POST Request
+```typescript
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'http',
+  config: JSON.stringify({
+    url: 'https://httpbin.org/post',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { hello: 'world' }
+  })
+});
+```
+
+### Example: HTTP GET Request
+```typescript
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'http',
+  config: JSON.stringify({
+    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
+    method: 'GET'
+  })
+});
+```
+
+---
+
+## 3. Cosmos Tasks (Blockchain)
+
+BlazeJob supports Cosmos blockchain tasks for sending tokens, querying balances, and more.
+
+- **Accepted type**: `cosmos`
+- **Features**:
+  - Token transfer (sendTokens)
+  - Balance queries, transactions (tx), and custom queries
+  - Batch Cosmos queries via `scheduleManyCosmosQueries`
+
+### Example: Cosmos Balance Query
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -23,12 +95,11 @@ jobs.schedule(async () => {}, {
   config: JSON.stringify({
     queryType: 'balance',
     queryParams: { address: 'cosmos1...' }
-    // rpcUrl peut venir de .env
   })
 });
 ```
 
-### Exemple d'envoi de tokens Cosmos
+### Example: Send Cosmos Tokens
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -44,12 +115,12 @@ jobs.schedule(async () => {}, {
 });
 ```
 
-## Variables d'environnement nécessaires
-- `COSMOS_MNEMONIC` – Mnemonic Cosmos
-- `COSMOS_RPC_URL` – Endpoint RPC Cosmos
+## Required Environment Variables
+- `COSMOS_MNEMONIC` – Cosmos mnemonic
+- `COSMOS_RPC_URL` – Cosmos RPC endpoint
 
-## Autres types de tâches
-Tout type autre que `cosmos` (ex: `shell`, `onchain`, `solana`, `email`, `fintech`, `http`) sera ignoré et simplement loggé. Pour toute extension, il faudra réactiver ou développer le connecteur correspondant.
+## Other Task Types
+Any type other than `cosmos` (e.g., `shell`, `onchain`, `solana`, `email`, `fintech`, `http`) will be ignored and simply logged. To extend, you will need to reactivate or develop the corresponding connector.
 
 ## CLI
 
