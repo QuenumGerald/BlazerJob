@@ -2,6 +2,68 @@
 
 BlazerJob is a Node.js/TypeScript library for scheduling, executing, and managing asynchronous tasks, with simple SQLite persistence. You can schedule any JavaScript/TypeScript function, HTTP requests, or blockchain (Cosmos) queries and transactions.
 
+# Supported Connectors
+
+BlazeJob currently supports only the following connectors for actual execution:
+
+| Connector Type | Status         | Description                                                      |
+|---------------|---------------|------------------------------------------------------------------|
+| `cosmos`      | Supported     | Send tokens, query balances/transactions, batch Cosmos queries    |
+| `http`        | Supported     | Generic HTTP requests (GET, POST, etc.)                          |
+| `shell`       | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `onchain`     | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `solana`      | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `email`       | Not supported | Present in types, but not executed (ignored/logged only)         |
+| `fintech`     | Not supported | Present in types, but not executed (ignored/logged only)         |
+
+> Only tasks of type `cosmos` and `http` are actually executed by BlazeJob. All other types are reserved for future extensions or compatibility, but are currently ignored or simply logged by the server.
+
+## 1. Custom Tasks (Arbitrary JavaScript/TypeScript)
+
+BlazeJob can schedule and execute any custom asynchronous JavaScript/TypeScript function. This is the most flexible way to use the scheduler, and is ideal for business logic, scripts, or workflows that don't fit a predefined connector.
+
+### Example: Custom Task
+```typescript
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
+
+jobs.schedule(async () => {
+  // Your custom logic here
+  console.log('Hello from a custom task!');
+  // You can use any Node.js/TypeScript code
+}, {
+  runAt: new Date(),
+  interval: 5000, // optional: repeat every 5 seconds
+  maxRuns: 3,     // optional: stop after 3 executions
+  onEnd: (stats) => {
+    console.log('Task finished. Stats:', stats);
+  }
+});
+
+jobs.start();
+```
+
+---
+
+## 2. HTTP Tasks (API Calls)
+
+BlazeJob natively supports HTTP tasks for scheduling API calls (GET, POST, etc.).
+
+### Example: HTTP POST Request
+```typescript
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'http',
+  config: JSON.stringify({
+    url: 'https://httpbin.org/post',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { hello: 'world' }
+  })
+});
+```
+
+### Example: HTTP GET Request
+=======
 ---
 
 ## Table of Contents
@@ -55,13 +117,15 @@ jobs.schedule(async () => {}, {
   runAt: new Date(),
   type: 'http',
   config: JSON.stringify({
-    url: 'https://httpbin.org/get',
+
+    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
+
     method: 'GET'
   })
 });
 ```
 
-### 4. Schedule a Cosmos task (e.g., balance query)
+
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -73,6 +137,8 @@ jobs.schedule(async () => {}, {
 });
 ```
 
+
+### Example: Send Cosmos Tokens
 ### 5. Start the scheduler
 ```typescript
 await jobs.start();
@@ -98,21 +164,16 @@ jobs.stop();
 ## Advanced Use Cases
 
 ### Send Cosmos tokens
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'cosmos',
-  config: JSON.stringify({
-    to: 'cosmos1...',
-    amount: '100000',
-    denom: 'uatom',
-    mnemonic: process.env.COSMOS_MNEMONIC,
-    chainId: 'cosmoshub-4',
-    rpcUrl: process.env.COSMOS_RPC_URL
-  })
-});
+
 ```
 
+## Required Environment Variables
+- `COSMOS_MNEMONIC` – Cosmos mnemonic
+- `COSMOS_RPC_URL` – Cosmos RPC endpoint
+
+## Other Task Types
+Any type other than `cosmos` (e.g., `shell`, `onchain`, `solana`, `email`, `fintech`, `http`) will be ignored and simply logged. To extend, you will need to reactivate or develop the corresponding connector.
+=======
 ### Batch Cosmos queries
 ```typescript
 import { scheduleManyCosmosQueries } from './src/cosmos';
@@ -137,6 +198,7 @@ await sendTokens({
   chainId: 'cosmoshub-4',
 });
 ```
+
 
 ---
 
