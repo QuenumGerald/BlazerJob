@@ -1,7 +1,7 @@
 {
   "name": "blazerjob",
   "version": "1.0.0",
-  "description": "Projet TypeScript pour BlazerJob.",
+  "description": "TypeScript library for scheduling, executing, and managing asynchronous tasks (custom, HTTP, Cosmos) with a SQLite backend.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -17,8 +17,27 @@
     "type": "git",
     "url": "git+https://github.com/QuenumGerald/BlazerJob.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "task scheduler",
+    "typescript",
+    "GNU",
+    "sqlite",
+    "blockchain",
+    "http",
+    "automation",
+    "cli",
+    "scheduler",
+    "job queue",
+    "cron",
+    "async",
+    "worker",
+    "cli",
+    "task runner",
+    "background jobs",
+    "open source",
+    "batching"
+  ],
+  "author": "Gérald Quenum <geraldquenum9@gmail.com>",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/QuenumGerald/BlazerJob/issues"
