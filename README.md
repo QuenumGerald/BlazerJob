@@ -3,7 +3,7 @@
 **BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
-# ⚠️ Supported Connectors
+# Supported Connectors
 
 BlazerJob currently supports only the following connectors for actual execution:
 
