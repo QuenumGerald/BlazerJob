@@ -1,10 +1,11 @@
-# BlazerJob
+# BlazerJob – Task Scheduler Library
 
-BlazerJob is a Node.js/TypeScript library for scheduling, executing, and managing asynchronous tasks, with simple SQLite persistence. You can schedule any JavaScript/TypeScript function, HTTP requests, or blockchain (Cosmos) queries and transactions.
+**BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
+Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
-# Supported Connectors
+# ⚠️ Supported Connectors
 
-BlazeJob currently supports only the following connectors for actual execution:
+BlazerJob currently supports only the following connectors for actual execution:
 
 | Connector Type | Status         | Description                                                      |
 |---------------|---------------|------------------------------------------------------------------|
@@ -16,15 +17,15 @@ BlazeJob currently supports only the following connectors for actual execution:
 | `email`       | Not supported | Present in types, but not executed (ignored/logged only)         |
 | `fintech`     | Not supported | Present in types, but not executed (ignored/logged only)         |
 
-> Only tasks of type `cosmos` and `http` are actually executed by BlazeJob. All other types are reserved for future extensions or compatibility, but are currently ignored or simply logged by the server.
+> Only tasks of type `cosmos` and `http` are actually executed by BlazerJob. All other types are reserved for future extensions or compatibility, but are currently ignored or simply logged by the server.
 
 ## 1. Custom Tasks (Arbitrary JavaScript/TypeScript)
 
-BlazeJob can schedule and execute any custom asynchronous JavaScript/TypeScript function. This is the most flexible way to use the scheduler, and is ideal for business logic, scripts, or workflows that don't fit a predefined connector.
+BlazerJob can schedule and execute any custom asynchronous JavaScript/TypeScript function. This is the most flexible way to use the scheduler, and is ideal for business logic, scripts, or workflows that don't fit a predefined connector.
 
 ### Example: Custom Task
 ```typescript
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazerJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {
   // Your custom logic here
@@ -46,7 +47,7 @@ jobs.start();
 
 ## 2. HTTP Tasks (API Calls)
 
-BlazeJob natively supports HTTP tasks for scheduling API calls (GET, POST, etc.).
+BlazerJob natively supports HTTP tasks for scheduling API calls (GET, POST, etc.).
 
 ### Example: HTTP POST Request
 ```typescript
@@ -63,69 +64,30 @@ jobs.schedule(async () => {}, {
 ```
 
 ### Example: HTTP GET Request
-=======
----
-
-## Table of Contents
-- [Overview](#overview)
-- [Installation](#installation)
-- [Getting Started](#getting-started)
-- [Advanced Use Cases](#advanced-use-cases)
-- [API](#api)
-- [Configuration & Environment Variables](#configuration--environment-variables)
-- [CLI](#cli)
-- [Contributing](#contributing)
-- [License](#license)
-
----
-
-## Overview
-BlazerJob lets you schedule and execute jobs reliably—even after a restart. Currently, only the Cosmos connector (Cosmos blockchain) is supported. Other job types (HTTP, Shell, Email, etc.) are disabled or not maintained.
-
----
-
-## Installation
-
-```bash
-npm install blazerjob
-```
-
----
-
-## Getting Started
-
-### 1. Import and initialize
-```typescript
-import { BlazeJob } from 'blazerjob';
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
-```
-
-### 2. Schedule a custom (arbitrary) task
-```typescript
-jobs.schedule(async () => {
-  console.log('Hello from my custom task!');
-  // Any JS/TS code here
-}, {
-  runAt: new Date(),
-  type: 'custom'
-});
-```
-
-### 3. Schedule an HTTP task
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
   type: 'http',
   config: JSON.stringify({
-
     url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
-
     method: 'GET'
   })
 });
 ```
 
+---
 
+## 3. Cosmos Tasks (Blockchain)
+
+BlazerJob supports Cosmos blockchain tasks for sending tokens, querying balances, and more.
+
+- **Accepted type**: `cosmos`
+- **Features**:
+  - Token transfer (sendTokens)
+  - Balance queries, transactions (tx), and custom queries
+  - Batch Cosmos queries via `scheduleManyCosmosQueries`
+
+### Example: Cosmos Balance Query
 ```typescript
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -137,34 +99,20 @@ jobs.schedule(async () => {}, {
 });
 ```
 
-
 ### Example: Send Cosmos Tokens
-### 5. Start the scheduler
 ```typescript
-await jobs.start();
-```
-
----
-
-## Stopping Tasks and the Scheduler
-
-To stop the scheduler and prevent further task execution, simply call:
-
-```typescript
-jobs.stop();
-```
-
-- This will stop the internal timer and no more scheduled tasks will run until you call `start()` again.
-- If you use recurring (interval) tasks, you can stop them at any time with `jobs.stop()`.
-- For CLI or server usage, you can also handle process signals (SIGINT/SIGTERM) to stop gracefully.
-- If the `autoExit` option is enabled, BlazerJob will automatically exit the process when all periodic tasks are done.
-
----
-
-## Advanced Use Cases
-
-### Send Cosmos tokens
-
+jobs.schedule(async () => {}, {
+  runAt: new Date(),
+  type: 'cosmos',
+  config: JSON.stringify({
+    to: 'cosmos1...',
+    amount: '100000',
+    denom: 'uatom',
+    mnemonic: process.env.COSMOS_MNEMONIC,
+    chainId: 'cosmoshub-4',
+    rpcUrl: process.env.COSMOS_RPC_URL
+  })
+});
 ```
 
 ## Required Environment Variables
@@ -173,83 +121,45 @@ jobs.stop();
 
 ## Other Task Types
 Any type other than `cosmos` (e.g., `shell`, `onchain`, `solana`, `email`, `fintech`, `http`) will be ignored and simply logged. To extend, you will need to reactivate or develop the corresponding connector.
-=======
-### Batch Cosmos queries
-```typescript
-import { scheduleManyCosmosQueries } from './src/cosmos';
-await scheduleManyCosmosQueries(jobs, {
-  addresses: ['cosmos1...', 'cosmos1...'],
-  count: 100,
-  queryType: 'balance',
-  intervalMs: 100,
-});
-```
-
-### Use Cosmos helpers directly
-```typescript
-import { getBalance, sendTokens } from './src/cosmos';
-const balance = await getBalance(process.env.COSMOS_RPC_URL, 'cosmos1...');
-await sendTokens({
-  rpcUrl: process.env.COSMOS_RPC_URL,
-  mnemonic: process.env.COSMOS_MNEMONIC,
-  to: 'cosmos1...',
-  amount: '100000',
-  denom: 'uatom',
-  chainId: 'cosmoshub-4',
-});
-```
-
-
----
-
-## API
-
-### Main Methods
-- `schedule(fn, options)`: Add a job to execute at a specific date/time.
-- `start()`: Start the scheduler (automatically executes due jobs).
-- `stop()`: Stop the scheduler.
-
-### Cosmos Helpers (in `src/cosmos/`)
-- `getBalance(rpcUrl, address)`: Get an address balance
-- `getTx(rpcUrl, hash)`: Get transaction details
-- `sendTokens({rpcUrl, mnemonic, to, amount, denom, ...})`: Send tokens
-- `scheduleManyCosmosQueries(jobs, { ... })`: Batch queries
-
----
-
-## Configuration & Environment Variables
-
-BlazerJob uses [dotenv](https://github.com/motdotla/dotenv). Copy `.env.example` to `.env` and fill in your secrets:
-
-- `COSMOS_MNEMONIC`: Cosmos mnemonic
-- `COSMOS_RPC_URL`: Cosmos RPC endpoint
-
----
 
 ## CLI
 
-BlazerJob provides a CLI to manage your jobs:
+BlazerJob provides a CLI to easily manage your scheduled tasks:
 
 ```bash
-npx ts-node src/bin/cli.ts help        # Help
-npx ts-node src/bin/cli.ts schedule   # Schedule a job
-npx ts-node src/bin/cli.ts list       # List jobs
-npx ts-node src/bin/cli.ts list-all   # List jobs in all .db files
-npx ts-node src/bin/cli.ts delete ID  # Delete a job
+# Show help
+npx ts-node src/bin/cli.ts help
+
+# Schedule a task (e.g., shell)
+npx ts-node src/bin/cli.ts schedule --type cosmos --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
+
+# List tasks (default blazerjob.db)
+npx ts-node src/bin/cli.ts list
+
+# List tasks from ALL .db files in the current directory
+ts-node src/bin/cli.ts list-all
+
+# Delete a task
+npx ts-node src/bin/cli.ts delete 123
 ```
 
----
+### Available Commands
 
-## Contributing
+#### `list-all`
+Displays tasks from all `.db` files in the current directory, with separate sections for each database.
 
-PRs are welcome! Please document your code and add tests if possible.
+**Example Output:**
+```
+=== Database: blazerjob.db ===
+┌─────────┬────┬─────────┬────────────────────────────┬──────────┬─────────────────────────────┐
+│ (index) │ id │  type   │           runAt            │  status  │          config             │
+├─────────┼────┼─────────┼────────────────────────────┼──────────┼─────────────────────────────┤
+│    0    │ 1  │ 'cosmos' │ '2025-05-05T21:24:13.727Z' │ 'failed' │ '{"cmd":"echo test"}'       │
+└─────────┴────┴─────────┴────────────────────────────┴──────────┴─────────────────────────────┘
 
----
-
-## License
-
-MIT
-
+=== Database: tasks_cosmos_query.db ===
+┌─────────┬────┬──────────┬────────────────────────────┬──────────┬─────────────────────────────────────┐
+│ (index) │ id │   type   │           runAt            │  status  │              config                 │
 ├─────────┼────┼──────────┼────────────────────────────┼──────────┼─────────────────────────────────────┤
 │    0    │ 42 │ 'cosmos' │ '2025-05-06T02:21:28.275Z' │ 'failed' │ '{"queryType":"balance",...}'     │
 └─────────┴────┴──────────┴────────────────────────────┴──────────┴─────────────────────────────────────┘
@@ -284,14 +194,14 @@ npm install blazerjob
 ## Import
 
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 ```
 
 ---
 
 ## Environment Variables & Secrets
 
-BlazeJob uses [dotenv](https://github.com/motdotla/dotenv) to securely load secrets (like private keys and RPC URLs) from a `.env` file.
+BlazerJob uses [dotenv](https://github.com/motdotla/dotenv) to securely load secrets (like private keys and RPC URLs) from a `.env` file.
 
 1. Copy `.env.example` to `.env` and fill in your secrets:
 
@@ -313,7 +223,7 @@ COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
 
 ## API Reference
 
-### `new BlazeJob(options: { dbPath: string })`
+### `new BlazerJob(options: { dbPath: string })`
 - **dbPath**: Path to the SQLite database file where tasks are stored.
 
 ### schedule(taskFn: () => Promise<void>, opts: { ... }): number
@@ -325,7 +235,7 @@ COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
   - `retriesLeft?`: (optional) Number of retry attempts if the task fails.
   - `type`: Task type (e.g. `'cosmos'`).
   - `config?`: (optional) Additional configuration for the task, see [TaskConfig](#taskconfig-interface) below.
-  - `webhookUrl?`: (optional) If set, BlazeJob will POST a JSON payload to this URL on task success, failure, or retry.
+  - `webhookUrl?`: (optional) If set, BlazerJob will POST a JSON payload to this URL on task success, failure, or retry.
 
 Returns the ID of the created task.
 
@@ -339,10 +249,10 @@ Returns the ID of the created task.
 
 ## Arrêt automatique du process (option autoExit)
 
-Pour les cas de test ou de script, vous pouvez demander à BlazeJob de couper le process automatiquement dès que toutes les tâches périodiques (avec `maxRuns` ou `maxDurationMs`) sont terminées :
+Pour les cas de test ou de script, vous pouvez demander à BlazerJob de couper le process automatiquement dès que toutes les tâches périodiques (avec `maxRuns` ou `maxDurationMs`) sont terminées :
 
 ```typescript
-const jobs = new BlazeJob({ dbPath: './test.db', autoExit: true });
+const jobs = new BlazerJob({ dbPath: './test.db', autoExit: true });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -374,7 +284,7 @@ jobs.onAllTasksEnded(() => {
 
 ## TaskConfig Interface
 
-BlazeJob supports the following task types and config structures:
+BlazerJob supports the following task types and config structures:
 
 ```typescript
 type TaskType = 'cosmos';
@@ -395,7 +305,7 @@ interface CosmosTaskConfig {
 
 ## Webhook Notifications
 
-If you set `webhookUrl` when scheduling a task, BlazeJob will POST a JSON payload to that URL on task completion (success, failure, or retry).
+If you set `webhookUrl` when scheduling a task, BlazerJob will POST a JSON payload to that URL on task completion (success, failure, or retry).
 
 ### Example Payload (Success)
 ```json
@@ -437,13 +347,13 @@ If you set `webhookUrl` when scheduling a task, BlazeJob will POST a JSON payloa
 
 ## Exemple : requête simple Cosmos (balance ou tx)
 
-Voici comment utiliser BlazeJob pour exécuter une requête simple sur Cosmos (par exemple, obtenir le solde d'une adresse ou les infos d'une transaction) :
+Voici comment utiliser BlazerJob pour exécuter une requête simple sur Cosmos (par exemple, obtenir le solde d'une adresse ou les infos d'une transaction) :
 
 ### 1. Query balance (solde)
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazerJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -460,9 +370,9 @@ jobs.start();
 
 ### 2. Query transaction (tx)
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazerJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -484,13 +394,13 @@ jobs.start();
 
 ## Exemple : requête HTTP planifiée (connecteur http)
 
-BlazeJob permet désormais de planifier une requête API HTTP (fetch) :
+BlazerJob permet désormais de planifier une requête API HTTP (fetch) :
 
 ### Exemple : requête POST simple
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazerJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -521,9 +431,9 @@ jobs.schedule(async () => {}, {
 ### Exemple : requête GET toutes les 10 secondes avec log de la réponse
 
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazerJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -556,7 +466,7 @@ jobs.start();
 
 ## Cosmos Module: Centralized Logic
 
-BlazeJob centralizes all Cosmos blockchain logic in the `src/cosmos/` module. This module exposes helpers for scheduling, querying, and sending tokens on Cosmos chains (CosmJS-compatible).
+BlazerJob centralizes all Cosmos blockchain logic in the `src/cosmos/` module. This module exposes helpers for scheduling, querying, and sending tokens on Cosmos chains (CosmJS-compatible).
 
 ### Features
 - **Batch scheduling**: Schedule hundreds of Cosmos queries or transactions in one call.
@@ -567,10 +477,10 @@ BlazeJob centralizes all Cosmos blockchain logic in the `src/cosmos/` module. Th
 
 ### Example: Batch Cosmos Queries
 ```typescript
-import { BlazeJob } from 'blazerjob';
+import { BlazerJob } from 'blazerjob';
 import { scheduleManyCosmosQueries } from './src/cosmos';
 
-const job = new BlazeJob({ dbPath: './tasks.db' });
+const job = new BlazerJob({ dbPath: './tasks.db' });
 
 await scheduleManyCosmosQueries(job, {
   addresses: [
@@ -616,7 +526,7 @@ See `.env.example` for details.
 
 ## Cosmos Helpers (API)
 
-BlazeJob exposes various Cosmos helpers in `src/cosmos/queries.ts`:
+BlazerJob exposes various Cosmos helpers in `src/cosmos/queries.ts`:
 
 - `getBalance(rpcUrl, address)`: Gets the balance of an address
 - `getTx(rpcUrl, hash)`: Retrieves a transaction by hash
@@ -650,4 +560,4 @@ const delegation = await getDelegation(process.env.COSMOS_RPC_URL, 'cosmos1deleg
 
 ## License
 
-MIT
+GNU
