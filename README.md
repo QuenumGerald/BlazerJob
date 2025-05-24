@@ -25,7 +25,7 @@ BlazerJob can schedule and execute any custom asynchronous JavaScript/TypeScript
 
 ### Example: Custom Task
 ```typescript
-const jobs = new BlazerJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {
   // Your custom logic here
@@ -131,7 +131,7 @@ BlazerJob provides a CLI to easily manage your scheduled tasks:
 npx ts-node src/bin/cli.ts help
 
 # Schedule a task (e.g., shell)
-npx ts-node src/bin/cli.ts schedule --type cosmos --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
+npx ts-node src/bin/cli.ts schedule --type shell --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
 
 # List tasks (default blazerjob.db)
 npx ts-node src/bin/cli.ts list
@@ -194,7 +194,7 @@ npm install blazerjob
 ## Import
 
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 ```
 
 ---
@@ -223,7 +223,7 @@ COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
 
 ## API Reference
 
-### `new BlazerJob(options: { dbPath: string })`
+### `new BlazeJob(options: { dbPath: string })`
 - **dbPath**: Path to the SQLite database file where tasks are stored.
 
 ### schedule(taskFn: () => Promise<void>, opts: { ... }): number
@@ -249,36 +249,36 @@ Returns the ID of the created task.
 
 ## Arrêt automatique du process (option autoExit)
 
-Pour les cas de test ou de script, vous pouvez demander à BlazerJob de couper le process automatiquement dès que toutes les tâches périodiques (avec `maxRuns` ou `maxDurationMs`) sont terminées :
+For testing or scripting purposes, you can configure BlazeJob to automatically exit the process as soon as all periodic tasks (with `maxRuns` or `maxDurationMs`) are completed:
 
 ```typescript
-const jobs = new BlazerJob({ dbPath: './test.db', autoExit: true });
+const jobs = new BlazeJob({ dbPath: './test.db', autoExit: true });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
   interval: 2000,
   maxRuns: 3,
   onEnd: (stats) => {
-    console.log('Résumé :', stats);
+    console.log('Summary:', stats);
   }
 });
 
 jobs.start();
-// Le process s'arrêtera automatiquement à la fin de la dernière tâche périodique.
+// The process will automatically exit after the last periodic task is finished.
 ```
 
-- Si `autoExit` n'est pas activé, le process continue de tourner normalement.
-- Vous pouvez aussi utiliser le callback global `onAllTasksEnded` pour effectuer des actions à la fin, sans arrêter le process :
+- If `autoExit` is not enabled, the process will continue running as usual.
+- You can also use the global `onAllTasksEnded` callback to perform actions at the end, without stopping the process:
 
 ```typescript
 jobs.onAllTasksEnded(() => {
-  console.log('Toutes les tâches périodiques sont terminées.');
+  console.log('All periodic tasks are done.');
 });
 ```
 
 ## Bonnes pratiques
-- **N'activez `autoExit` que pour les scripts ou les tests.**
-- **En production/server, laissez `autoExit` à `false` (par défaut) pour éviter tout arrêt inopiné du process.**
+- **Enable `autoExit` only for scripts or tests.**
+- **In production/server, leave `autoExit` as `false` (the default) to prevent unexpected process termination.**
 
 ---
 
@@ -347,13 +347,13 @@ If you set `webhookUrl` when scheduling a task, BlazerJob will POST a JSON paylo
 
 ## Exemple : requête simple Cosmos (balance ou tx)
 
-Voici comment utiliser BlazerJob pour exécuter une requête simple sur Cosmos (par exemple, obtenir le solde d'une adresse ou les infos d'une transaction) :
+Here’s how to use BlazerJob to execute a simple query on Cosmos (for example, to get the balance of an address or transaction info):
 
 ### 1. Query balance (solde)
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazerJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -370,9 +370,9 @@ jobs.start();
 
 ### 2. Query transaction (tx)
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazerJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -387,20 +387,20 @@ jobs.schedule(async () => {}, {
 jobs.start();
 ```
 
-- Les résultats sont loggés côté serveur (console).
-- Pour une requête personnalisée, utilise `queryType: 'custom'` et adapte `queryParams` selon tes besoins.
+- Results are logged on the server side (console).
+- For a custom query, use `queryType: 'custom'` and adapt `queryParams` as needed.
 
 ---
 
-## Exemple : requête HTTP planifiée (connecteur http)
+## Example: Scheduled HTTP request (http connector)
 
-BlazerJob permet désormais de planifier une requête API HTTP (fetch) :
+BlazerJob now lets you schedule an HTTP API request (using fetch):
 
-### Exemple : requête POST simple
+### Example: simple POST request
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazerJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -431,9 +431,9 @@ jobs.schedule(async () => {}, {
 ### Exemple : requête GET toutes les 10 secondes avec log de la réponse
 
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazerJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db' });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -477,10 +477,10 @@ BlazerJob centralizes all Cosmos blockchain logic in the `src/cosmos/` module. T
 
 ### Example: Batch Cosmos Queries
 ```typescript
-import { BlazerJob } from 'blazerjob';
+import { BlazeJob } from 'blazerjob';
 import { scheduleManyCosmosQueries } from './src/cosmos';
 
-const job = new BlazerJob({ dbPath: './tasks.db' });
+const job = new BlazeJob({ dbPath: './tasks.db' });
 
 await scheduleManyCosmosQueries(job, {
   addresses: [
