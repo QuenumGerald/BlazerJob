@@ -25,7 +25,7 @@ BlazerJob can schedule and execute any custom asynchronous JavaScript/TypeScript
 
 ### Example: Custom Task
 ```typescript
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob({ dbPath: './tasks.db', concurrency: 16 });
 
 jobs.schedule(async () => {
   // Your custom logic here
@@ -188,6 +188,29 @@ Deletes a task by its ID.
 ```bash
 npm install blazerjob
 ```
+
+---
+
+## Performance & tuning
+
+- SQLite WAL enabled by default (`journal_mode = WAL`) to avoid reader/writer blocking.
+- Concurrency configured via `concurrency` option (default `1` for backward compatibility).
+- Scheduler interval lowered to 50 ms + immediate drain when all slots are used.
+
+Synthetic benchmarks (fake tasks, local NVMe) :
+
+| Concurrency | Task duration | Observed throughput |
+|-------------|---------------|---------------------|
+| 16          | 50 ms         | ~31 tasks/s (with logs) |
+| 32          | 50 ms         | ~544 tasks/s |
+| 64          | 50 ms         | ~982 tasks/s |
+| 64          | 10 ms         | ~1,156 tasks/s |
+| 128         | 10 ms         | ~2,183 tasks/s |
+| 256         | 10 ms         | ~3,096 tasks/s |
+| 512         | 10 ms         | ~4,367 tasks/s |
+| 1024        | 10 ms         | ~4,464 tasks/s |
+
+Numbers depend heavily on CPU/I/O; tune `concurrency` to match your workload.
 
 ---
 

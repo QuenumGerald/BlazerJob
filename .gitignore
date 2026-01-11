@@ -148,3 +148,5 @@ dist
 # db
 blazerjob.db
 *.db
+*.db-wal
+*.db-shm

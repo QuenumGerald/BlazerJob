@@ -24,6 +24,7 @@ export type OnAllTasksEnded = () => void;
 export interface BlazeJobOptions {
   dbPath: string;
   autoExit?: boolean;
+  concurrency?: number;
 }
 
 export class BlazeJob {
@@ -35,6 +36,8 @@ export class BlazeJob {
   private periodicTaskCount = 0;
   private onAllTasksEndedCb?: OnAllTasksEnded;
   private autoExit: boolean;
+  private concurrency: number;
+  private activeTasksCount = 0;
   // Map: taskId -> taskFn (en mémoire)
   private taskFns = new Map<number, () => Promise<void>>();
 
@@ -44,7 +47,9 @@ export class BlazeJob {
 
   constructor(options: BlazeJobOptions) {
     this.db = new Database(options.dbPath);
+    this.db.pragma('journal_mode = WAL');
     this.autoExit = !!options.autoExit;
+    this.concurrency = options.concurrency || 1;
     this.db.prepare(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +80,7 @@ export class BlazeJob {
 
   public async start() {
     if (!this.timer) {
-      this.timer = setInterval(() => this.tick(), 500);
+      this.timer = setInterval(() => this.tick(), 50);
     }
   }
 
@@ -104,94 +109,102 @@ export class BlazeJob {
       lastError: string | null;
     };
     const now = new Date().toISOString();
+    const availableSlots = this.concurrency - this.activeTasksCount;
+    if (availableSlots <= 0) return;
     const selectStmt = this.db.prepare(`
       SELECT * FROM tasks
       WHERE runAt <= @now AND status = 'pending'
       ORDER BY priority DESC, runAt ASC
+      LIMIT ${availableSlots}
     `);
     const dueTasks = selectStmt.all({ now }) as TaskRow[];
+    if (dueTasks.length === 0) return;
 
     for (const task of dueTasks) {
-      const stat = this.taskRunStats.get(task.id);
-      if (task.type === 'cosmos' && task.config) {
-        console.log('[BlazeJob] tâche Cosmos détectée', task);
-      }
-      // Mark as running
       this.db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(task.id);
-      let taskFn: () => Promise<void> = async () => {};
-      // Si la tâche a une fonction JS custom (stockée en mémoire), on l'utilise
-      if (this.taskFns.has(task.id)) {
-        taskFn = this.taskFns.get(task.id)!;
-      } else if (task.type === 'cosmos') {
-        const config = typeof task.config === 'string' ? JSON.parse(task.config) : task.config;
-        console.log('[BlazeJob] Config Cosmos parsée pour la tâche', task.id, config);
-        let configCopy = JSON.parse(JSON.stringify(config)); // clonage profond
-        if (typeof configCopy === 'string') {
-          configCopy = JSON.parse(configCopy);
-        }
-        taskFn = makeCosmosTaskFn(configCopy);
-        console.log('[BlazeJob] taskFn Cosmos construit pour la tâche', task.id);
-      } else if (task.type === 'http' && task.config) {
-        let config: any = task.config;
-        // Correction : parser plusieurs fois si besoin
-        for (let i = 0; i < 2; i++) {
-          if (typeof config === 'string') {
-            try {
-              config = JSON.parse(config);
-            } catch (e) {
-              console.error('[BlazeJob][HTTP] Erreur de parsing config:', e, config);
-              break;
+      this.activeTasksCount++;
+      (async () => {
+        const stat = this.taskRunStats.get(task.id);
+        try {
+          let taskFn: () => Promise<void> = async () => { };
+          // Si la tâche a une fonction JS custom (stockée en mémoire), on l'utilise
+          if (this.taskFns.has(task.id)) {
+            taskFn = this.taskFns.get(task.id)!;
+          } else if (task.type === 'cosmos') {
+            const config = typeof task.config === 'string' ? JSON.parse(task.config) : task.config;
+            let configCopy = JSON.parse(JSON.stringify(config)); // clonage profond
+            if (typeof configCopy === 'string') {
+              configCopy = JSON.parse(configCopy);
+            }
+            taskFn = makeCosmosTaskFn(configCopy);
+          } else if (task.type === 'http' && task.config) {
+            let config: any = task.config;
+            // Correction : parser plusieurs fois si besoin
+            for (let i = 0; i < 2; i++) {
+              if (typeof config === 'string') {
+                try {
+                  config = JSON.parse(config);
+                } catch (e) {
+                  console.error('[BlazeJob][HTTP] Erreur de parsing config:', e, config);
+                  break;
+                }
+              }
+            }
+            taskFn = makeHttpTaskFn(config);
+          } else {
+            // NE PAS réassigner taskFn ici pour laisser la fonction custom s'exécuter
+          }
+          await taskFn();
+          // Après exécution de la tâche (succès ou erreur)
+          if (stat) {
+            stat.runCount++;
+            // Vérifie si on a atteint maxRuns ou maxDuration
+            if ((stat.maxRuns && stat.runCount >= stat.maxRuns) || (stat.maxDurationMs && Date.now() - stat.startedAt > stat.maxDurationMs)) {
+              let shouldTerminate = true;
             }
           }
-        }
-        console.log('[BlazeJob] Config HTTP finale pour la tâche', task.id, config, 'Type:', typeof config, 'Keys:', Object.keys(config));
-        taskFn = makeHttpTaskFn(config);
-      } else {
-        console.log('[BlazeJob] Tâche Custom, type:', task.type, 'id:', task.id);
-        // NE PAS réassigner taskFn ici pour laisser la fonction custom s'exécuter
-      }
-      console.log('[BlazeJob] Avant exécution de taskFn pour la tâche', task.id);
-      await taskFn();
-      console.log('[BlazeJob] Après exécution de taskFn pour la tâche', task.id);
-      // Après exécution de la tâche (succès ou erreur)
-      if (stat) {
-        stat.runCount++;
-        // Vérifie si on a atteint maxRuns ou maxDuration
-        if ((stat.maxRuns && stat.runCount >= stat.maxRuns) || (stat.maxDurationMs && Date.now() - stat.startedAt > stat.maxDurationMs)) {
-          let shouldTerminate = true;
-        }
-      }
-      if (typeof task.interval === 'number' && task.interval > 0 && (!stat?.maxRuns || stat.runCount < stat.maxRuns)) {
-        // Replanifier la tâche périodique
-        const nextRunAt = new Date(Date.now() + task.interval).toISOString();
-        this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ? WHERE id = ?`).run(nextRunAt, task.id);
-        console.log(`[BlazeJob] Tâche ${task.id} reprogrammée pour ${nextRunAt} (runCount=${stat?.runCount})`);
-      } else {
-        // Tâche terminée (succès ou fin de retry)
-        this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
-        if (stat && stat.onEnd) stat.onEnd({ runCount: stat.runCount, errorCount: stat.errorCount || 0 });
-        this.taskRunStats.delete(task.id);
-        this.periodicTaskCount--;
-        // console.log('[BlazeJob][DEBUG] Après suppression, periodicTaskCount:', this.periodicTaskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
-        if (this.periodicTaskCount === 0 && this.onAllTasksEndedCb) this.onAllTasksEndedCb();
-        if (this.periodicTaskCount === 0 && this.autoExit) {
-          // console.log('[BlazeJob][DEBUG] Condition autoExit atteinte, arrêt dans 200ms');
-          setTimeout(() => {
-            try {
-              this.stop();
-            } catch (e) {
-              console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
+          if (typeof task.interval === 'number' && task.interval > 0 && (!stat?.maxRuns || stat.runCount < stat.maxRuns)) {
+            // Replanifier la tâche périodique
+            const nextRunAt = new Date(Date.now() + task.interval).toISOString();
+            this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ? WHERE id = ?`).run(nextRunAt, task.id);
+          } else {
+            // Tâche terminée (succès ou fin de retry)
+            this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
+            if (stat && stat.onEnd) stat.onEnd({ runCount: stat.runCount, errorCount: stat.errorCount || 0 });
+            this.taskRunStats.delete(task.id);
+            this.periodicTaskCount--;
+            // console.log('[BlazeJob][DEBUG] Après suppression, periodicTaskCount:', this.periodicTaskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
+            if (this.periodicTaskCount === 0 && this.onAllTasksEndedCb) this.onAllTasksEndedCb();
+            if (this.periodicTaskCount === 0 && this.autoExit) {
+              // console.log('[BlazeJob][DEBUG] Condition autoExit atteinte, arrêt dans 200ms');
+              setTimeout(() => {
+                try {
+                  this.stop();
+                } catch (e) {
+                  console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
+                }
+                try {
+                  if (this.db && typeof this.db.close === 'function') this.db.close();
+                } catch (e) {
+                  console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
+                }
+                console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
+                process.exit(0);
+              }, 200);
             }
-            try {
-              if (this.db && typeof this.db.close === 'function') this.db.close();
-            } catch (e) {
-              console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
-            }
-            console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
-            process.exit(0);
-          }, 200);
+          }
+        } catch (err) {
+          console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
+        } finally {
+          this.activeTasksCount--;
         }
-      }
+      })();
+    }
+
+    // Drain immédiatement si d'autres tâches sont prêtes et qu'il reste de la capacité,
+    // sans attendre le prochain intervalle.
+    if (dueTasks.length === availableSlots) {
+      setImmediate(() => this.tick());
     }
   }
 
@@ -331,7 +344,7 @@ app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
 // POST /task: schedule a new task
 app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
   const { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd } = (request.body as any) ?? {};
-  let taskFn: () => Promise<void> = async () => {};
+  let taskFn: () => Promise<void> = async () => { };
   if (type === 'cosmos' && config) {
     const cfg = JSON.parse(config) as CosmosTaskConfig;
     const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;

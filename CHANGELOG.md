@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 - Added support for Cosmos SDK queries (balance, transactions)
 - Added HTTP request task scheduling capabilities
 - Added autoExit option for script/test environments
+### Performance
+- Enabled SQLite WAL by default for better concurrent reads/writes
+- Added configurable `concurrency` (default 1 for backward compatibility)
+- Reduced scheduler tick interval to 50 ms with immediate drain when capacity is reached
+- Bench (tâches factices, NVMe local) : jusqu’à ~4.4k tasks/s (concurrency 1024, tâches 10 ms)
 
 ### Improved
 - Translated all French documentation to English
