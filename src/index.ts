@@ -11,10 +11,19 @@ import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { makeCosmosTaskFn } from './cosmos/queries';
 import { makeHttpTaskFn } from './http/queries';
 
+export type RetryStrategy = 'exponential' | 'linear' | 'fixed';
+
+export interface RetryConfig {
+  strategy?: RetryStrategy;
+  delayMs?: number;
+  maxDelayMs?: number;
+}
+
 export interface ScheduleExtra {
   maxRuns?: number;
   maxDurationMs?: number;
   onEnd?: (stats: { runCount: number, errorCount: number }) => void;
+  retryConfig?: RetryConfig;
 }
 
 export type OnTaskEnd = (taskId: number, stats: { runCount: number, errorCount: number }) => void;
@@ -30,8 +39,8 @@ export interface BlazeJobOptions {
 export class BlazeJob {
   private db: any;
   private timer?: NodeJS.Timeout;
-  // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs }
-  private taskRunStats = new Map<number, { runCount: number, startedAt: number, maxRuns?: number, maxDurationMs?: number, onEnd?: (stats: { runCount: number, errorCount: number }) => void, errorCount?: number }>();
+  // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs, retryConfig }
+  private taskRunStats = new Map<number, { runCount: number, startedAt: number, maxRuns?: number, maxDurationMs?: number, onEnd?: (stats: { runCount: number, errorCount: number }) => void, errorCount?: number, retryConfig?: RetryConfig }>();
   private taskErrorCount = new Map<number, number>();
   private periodicTaskCount = 0;
   private onAllTasksEndedCb?: OnAllTasksEnded;
@@ -145,7 +154,7 @@ export class BlazeJob {
                 try {
                   config = JSON.parse(config);
                 } catch (e) {
-                  console.error('[BlazeJob][HTTP] Erreur de parsing config:', e, config);
+                  console.error('[BlazeJob][HTTP] Config parsing error:', e, config);
                   break;
                 }
               }
@@ -181,20 +190,20 @@ export class BlazeJob {
                 try {
                   this.stop();
                 } catch (e) {
-                  console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
+                  console.error('[BlazeJob] Error stopping scheduler', e);
                 }
                 try {
                   if (this.db && typeof this.db.close === 'function') this.db.close();
                 } catch (e) {
-                  console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
+                  console.error('[BlazeJob] Error closing database', e);
                 }
-                console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
+                console.log('[BlazeJob] All periodic tasks completed. Auto-exiting process.');
                 process.exit(0);
               }, 200);
             }
           }
         } catch (err) {
-          console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
+          console.error('[BlazeJob] Error executing task', task.id, err);
 
           // Mettre à jour le compteur d'erreurs
           if (stat) {
@@ -209,28 +218,77 @@ export class BlazeJob {
           const newRetriesLeft = Math.max(0, task.retriesLeft - 1);
 
           if (newRetriesLeft > 0) {
-            // Calculer le backoff exponentiel : 1s, 2s, 4s, 8s, 16s...
+            // Récupérer la configuration de retry
+            const retryConfig = stat?.retryConfig || {};
+            const strategy = retryConfig.strategy || 'exponential';
+            const baseDelayMs = retryConfig.delayMs || 1000;
+            const maxDelayMs = retryConfig.maxDelayMs || 60000;
             const attemptNumber = (stat?.errorCount || 1);
-            const backoffMs = 1000 * Math.pow(2, attemptNumber - 1);
+
+            // Calculer le délai selon la stratégie
+            let backoffMs: number;
+            switch (strategy) {
+              case 'fixed':
+                backoffMs = baseDelayMs;
+                break;
+              case 'linear':
+                backoffMs = baseDelayMs * attemptNumber;
+                break;
+              case 'exponential':
+              default:
+                backoffMs = baseDelayMs * Math.pow(2, attemptNumber - 1);
+                break;
+            }
+
+            // Limiter au délai maximum
+            backoffMs = Math.min(backoffMs, maxDelayMs);
             const nextRunAt = new Date(Date.now() + backoffMs).toISOString();
 
-            console.log(`[BlazeJob] Tâche ${task.id} échouée (tentative ${attemptNumber}). Retry dans ${backoffMs}ms (retriesLeft: ${newRetriesLeft})`);
+            console.log(`[BlazeJob] Task ${task.id} failed (attempt ${attemptNumber}). Retrying in ${backoffMs}ms (strategy: ${strategy}, retriesLeft: ${newRetriesLeft})`);
 
-            // Replanifier la tâche avec backoff exponentiel
+            // Replanifier la tâche
             this.db.prepare(`
               UPDATE tasks
               SET status = 'pending', runAt = ?, retriesLeft = ?
               WHERE id = ?
             `).run(nextRunAt, newRetriesLeft, task.id);
+
+            // Appeler le webhook si configuré (notification de retry)
+            if (task.webhookUrl) {
+              BlazeJob.sendWebhook(task.webhookUrl, {
+                taskId: task.id,
+                status: 'pending',
+                executedAt: new Date().toISOString(),
+                result: 'retry',
+                output: null,
+                error: errorMessage,
+                retriesLeft: newRetriesLeft,
+                nextRetryAt: nextRunAt,
+                attemptNumber
+              });
+            }
           } else {
             // Plus de retries disponibles, marquer comme échouée
-            console.log(`[BlazeJob] Tâche ${task.id} définitivement échouée après ${stat?.errorCount || 1} tentative(s)`);
+            console.log(`[BlazeJob] Task ${task.id} permanently failed after ${stat?.errorCount || 1} attempt(s)`);
 
             this.db.prepare(`
               UPDATE tasks
               SET status = 'failed', executed_at = ?, retriesLeft = 0
               WHERE id = ?
             `).run(new Date().toISOString(), task.id);
+
+            // Appeler le webhook si configuré (notification d'échec définitif)
+            if (task.webhookUrl) {
+              BlazeJob.sendWebhook(task.webhookUrl, {
+                taskId: task.id,
+                status: 'failed',
+                executedAt: new Date().toISOString(),
+                result: 'error',
+                output: null,
+                error: errorMessage,
+                totalAttempts: stat?.errorCount || 1
+              });
+            }
 
             // Appeler le callback onEnd si présent
             if (stat && stat.onEnd) {
@@ -251,14 +309,14 @@ export class BlazeJob {
                 try {
                   this.stop();
                 } catch (e) {
-                  console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
+                  console.error('[BlazeJob] Error stopping scheduler', e);
                 }
                 try {
                   if (this.db && typeof this.db.close === 'function') this.db.close();
                 } catch (e) {
-                  console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
+                  console.error('[BlazeJob] Error closing database', e);
                 }
-                console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
+                console.log('[BlazeJob] All periodic tasks completed. Auto-exiting process.');
                 process.exit(0);
               }, 200);
             }
@@ -359,7 +417,8 @@ export class BlazeJob {
       webhookUrl,
       maxRuns,
       maxDurationMs,
-      onEnd
+      onEnd,
+      retryConfig
     } = options;
     const stmt = this.db.prepare(`
       INSERT INTO tasks (runAt, interval, priority, retriesLeft, type, config, webhookUrl)
@@ -383,7 +442,8 @@ export class BlazeJob {
       maxRuns,
       maxDurationMs,
       onEnd,
-      errorCount: 0
+      errorCount: 0,
+      retryConfig
     });
     return taskId;
   }
@@ -477,7 +537,7 @@ export async function stopServer() {
   await app.close();
   jobs.stop();
   jobs['db'].close();
-  console.log('Serveur et scheduler arrêtés proprement.');
+  console.log('Server and scheduler stopped gracefully.');
 }
 
 // Optionnel : gestion du signal SIGTERM/SIGINT

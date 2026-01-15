@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-01-15
+### Added
+- **Configurable retry strategies**: Choose between `exponential` (default), `linear`, or `fixed` backoff strategies
+- **Retry configuration**: Set custom `delayMs` (base delay) and `maxDelayMs` (maximum delay cap) for retry attempts
+- **Webhook notifications on retry**: Webhooks are now called on each retry attempt with detailed information (attemptNumber, retriesLeft, nextRetryAt)
+- **Enhanced webhook payloads**: Improved webhook payloads for both retry and final failure events
+### Improved
+- Better retry error tracking with enhanced logging showing retry strategy in use
+- More granular control over retry behavior per task
+### Types
+- Added `RetryStrategy` type: `'exponential' | 'linear' | 'fixed'`
+- Added `RetryConfig` interface with `strategy`, `delayMs`, and `maxDelayMs` options
+- Extended `ScheduleExtra` interface to include optional `retryConfig`
+
 ## [1.2.0] - 2026-01-11
 ### Performance
 - Enabled SQLite WAL by default to improve concurrent reads/writes.
