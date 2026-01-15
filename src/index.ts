@@ -195,6 +195,74 @@ export class BlazeJob {
           }
         } catch (err) {
           console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
+
+          // Mettre à jour le compteur d'erreurs
+          if (stat) {
+            stat.errorCount = (stat.errorCount || 0) + 1;
+          }
+
+          // Sauvegarder l'erreur dans la base
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          this.db.prepare(`UPDATE tasks SET lastError = ? WHERE id = ?`).run(errorMessage, task.id);
+
+          // Décrémenter retriesLeft
+          const newRetriesLeft = Math.max(0, task.retriesLeft - 1);
+
+          if (newRetriesLeft > 0) {
+            // Calculer le backoff exponentiel : 1s, 2s, 4s, 8s, 16s...
+            const attemptNumber = (stat?.errorCount || 1);
+            const backoffMs = 1000 * Math.pow(2, attemptNumber - 1);
+            const nextRunAt = new Date(Date.now() + backoffMs).toISOString();
+
+            console.log(`[BlazeJob] Tâche ${task.id} échouée (tentative ${attemptNumber}). Retry dans ${backoffMs}ms (retriesLeft: ${newRetriesLeft})`);
+
+            // Replanifier la tâche avec backoff exponentiel
+            this.db.prepare(`
+              UPDATE tasks
+              SET status = 'pending', runAt = ?, retriesLeft = ?
+              WHERE id = ?
+            `).run(nextRunAt, newRetriesLeft, task.id);
+          } else {
+            // Plus de retries disponibles, marquer comme échouée
+            console.log(`[BlazeJob] Tâche ${task.id} définitivement échouée après ${stat?.errorCount || 1} tentative(s)`);
+
+            this.db.prepare(`
+              UPDATE tasks
+              SET status = 'failed', executed_at = ?, retriesLeft = 0
+              WHERE id = ?
+            `).run(new Date().toISOString(), task.id);
+
+            // Appeler le callback onEnd si présent
+            if (stat && stat.onEnd) {
+              stat.onEnd({ runCount: stat.runCount, errorCount: stat.errorCount || 0 });
+            }
+
+            // Nettoyer les stats et décrémenter le compteur de tâches périodiques
+            this.taskRunStats.delete(task.id);
+            this.periodicTaskCount--;
+
+            // Vérifier si toutes les tâches sont terminées
+            if (this.periodicTaskCount === 0 && this.onAllTasksEndedCb) {
+              this.onAllTasksEndedCb();
+            }
+
+            if (this.periodicTaskCount === 0 && this.autoExit) {
+              setTimeout(() => {
+                try {
+                  this.stop();
+                } catch (e) {
+                  console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
+                }
+                try {
+                  if (this.db && typeof this.db.close === 'function') this.db.close();
+                } catch (e) {
+                  console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
+                }
+                console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
+                process.exit(0);
+              }, 200);
+            }
+          }
         } finally {
           this.activeTasksCount--;
         }
