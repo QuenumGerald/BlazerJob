@@ -3,6 +3,43 @@
 **BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
+## Why BlazerJob vs BullMQ?
+
+BlazerJob and BullMQ are both task scheduling solutions, but with different philosophies:
+
+### BlazerJob Advantages
+
+| Feature | BlazerJob | BullMQ |
+|---------|-----------|---------|
+| **Infrastructure** | Zero external dependencies (SQLite) | Requires Redis server |
+| **Setup complexity** | Single library, no setup | Redis installation & management required |
+| **Deployment** | Single process, embedded DB | Separate Redis deployment |
+| **Cost** | Free (no infrastructure) | Redis hosting costs |
+| **Performance** | ~4.4k tasks/s (local NVMe) | Higher throughput with Redis |
+| **Horizontal scaling** | Limited (single DB file) | Excellent (Redis cluster) |
+| **Use case** | Small to medium workloads, embedded apps | Large-scale distributed systems |
+| **Blockchain native** | Built-in Cosmos & HTTP connectors | Generic queue (requires custom code) |
+
+### When to choose BlazerJob:
+- ✅ You want **zero infrastructure** overhead
+- ✅ Simple deployment (single Node.js process)
+- ✅ Small to medium workloads (<5k tasks/second)
+- ✅ Embedded applications or scripts
+- ✅ Blockchain tasks (Cosmos, HTTP APIs)
+- ✅ Development & testing environments
+- ✅ Cost-conscious projects
+
+### When to choose BullMQ:
+- ✅ High-throughput requirements (>10k tasks/second)
+- ✅ Distributed architecture across multiple servers
+- ✅ Already using Redis in your stack
+- ✅ Need Redis-specific features (streams, pub/sub)
+- ✅ Enterprise-scale job processing
+
+**In summary:** BlazerJob prioritizes **simplicity and zero dependencies**, while BullMQ prioritizes **scalability and throughput**. Choose based on your infrastructure constraints and workload requirements.
+
+---
+
 # Supported Connectors
 
 BlazerJob currently supports only the following connectors for actual execution:
