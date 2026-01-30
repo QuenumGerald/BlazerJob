@@ -189,6 +189,8 @@ Deletes a task by its ID.
 npm install blazerjob
 ```
 
+> Note: Installation can take a bit longer because BlazerJob pulls in blockchain SDKs and builds native SQLite bindings (`better-sqlite3`). If you’re on a fresh machine, ensure build tools are available (e.g., Python + a C/C++ compiler) before installing.
+
 ---
 
 ## Performance & tuning

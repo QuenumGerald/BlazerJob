@@ -2,12 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-01-30
+### Maintenance
+- Version bump to 1.3.1 for release.
+
 ## [1.2.0] - 2026-01-11
 ### Performance
 - Enabled SQLite WAL by default to improve concurrent reads/writes.
 - Added configurable `concurrency` (default 1 for backward compatibility).
 - Reduced scheduler tick interval to 50 ms with immediate drain when capacity is reached.
-- Bench (synthetic, local NVMe) : up to ~4.4k tasks/s (concurrency 1024, tasks 10 ms).
+- Bench (synthetic, local NVMe): up to ~4.4k tasks/s (concurrency 1024, tasks 10 ms).
 ### Docs
 - Updated README “Performance & tuning” section with concurrency/WAL details and benchmark table.
 - Clarified defaults and examples with concurrency option.
