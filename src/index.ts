@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import * as crypto from 'crypto';
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 // @ts-ignore
 const Database = require('better-sqlite3');
@@ -73,6 +74,11 @@ export class BlazeJob {
     }
     try {
       this.db.prepare('ALTER TABLE tasks ADD COLUMN webhookUrl TEXT').run();
+    } catch (e) {
+      // Ignore si déjà présent
+    }
+    try {
+      this.db.prepare('ALTER TABLE tasks ADD COLUMN deleteToken TEXT').run();
     } catch (e) {
       // Ignore si déjà présent
     }
@@ -289,13 +295,14 @@ export class BlazeJob {
       type,
       config,
       webhookUrl,
+      deleteToken,
       maxRuns,
       maxDurationMs,
       onEnd
     } = options;
     const stmt = this.db.prepare(`
-      INSERT INTO tasks (runAt, interval, priority, retriesLeft, type, config, webhookUrl)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (runAt, interval, priority, retriesLeft, type, config, webhookUrl, deleteToken)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       runAt instanceof Date ? runAt.toISOString() : runAt,
@@ -304,7 +311,8 @@ export class BlazeJob {
       retriesLeft,
       type,
       config ? JSON.stringify(config) : null,
-      webhookUrl
+      webhookUrl,
+      deleteToken
     );
     const taskId = result.lastInsertRowid as number;
     // Stocke la fonction JS en mémoire pour ce taskId
@@ -330,15 +338,37 @@ const app: FastifyInstance = Fastify({
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 app.register(require('@fastify/formbody'));
 
+
 // Initialize SQLite database
 const db = new Database('blazerjob.db');
 
 const jobs = new BlazeJob({ dbPath: 'blazerjob.db' });
 
-// GET /tasks: return all scheduled tasks
+// GET /tasks: return all scheduled tasks (public info only)
 app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
-  const tasks = db.prepare('SELECT * FROM tasks').all();
+  const tasks = db.prepare('SELECT id, runAt, interval, priority, retriesLeft, type, status, executed_at, created_at, lastError, webhookUrl FROM tasks').all();
   reply.send(tasks);
+});
+
+// GET /task/:id: return full details of a task (requires token if set)
+app.get('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+  const { id } = request.params as { id: string };
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
+
+  if (!task) {
+    reply.code(404).send({ error: 'Task not found' });
+    return;
+  }
+
+  if (task.deleteToken) {
+    const providedToken = request.headers['x-task-token'];
+    if (providedToken !== task.deleteToken) {
+      reply.code(401).send({ error: 'Unauthorized: Invalid or missing token' });
+      return;
+    }
+  }
+
+  reply.send(task);
 });
 
 // POST /task: schedule a new task
@@ -393,13 +423,26 @@ app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
       console.log('Task executed:', { type, config });
     };
   }
-  const taskId = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd });
-  reply.code(201).send({ id: taskId });
+  // Generate a cryptographically secure random token for deletion
+  const deleteToken = crypto.randomBytes(16).toString('hex');
+
+  const taskId = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type, config, webhookUrl, deleteToken, maxRuns, maxDurationMs, onEnd });
+  reply.code(201).send({ id: taskId, deleteToken });
 });
 
 // DELETE /task/:id: delete a task by id
 app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
   const { id } = request.params as { id: string };
+  const task = db.prepare('SELECT deleteToken FROM tasks WHERE id = ?').get(id) as { deleteToken: string | null } | undefined;
+
+  if (task && task.deleteToken) {
+    const providedToken = request.headers['x-task-token'];
+    if (providedToken !== task.deleteToken) {
+      reply.code(401).send({ error: 'Unauthorized: Invalid or missing delete token' });
+      return;
+    }
+  }
+
   db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
   reply.code(204).send();
 });
