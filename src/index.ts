@@ -5,6 +5,7 @@ import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 // @ts-ignore
 const Database = require('better-sqlite3');
 import fetch from 'node-fetch'; // si node <18
+import * as crypto from 'crypto';
 import { TaskType, TaskConfig, CosmosTaskConfig, HttpTaskConfig } from './types';
 import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
@@ -25,11 +26,45 @@ export interface BlazeJobOptions {
   dbPath: string;
   autoExit?: boolean;
   concurrency?: number;
+  encryptionKey?: string;
+}
+
+const ALGORITHM = 'aes-256-gcm';
+function getEncryptionKey(optionsKey?: string): Buffer {
+  const key = optionsKey || process.env.BLAZERJOB_ENCRYPTION_KEY || 'default_blazerjob_secret_do_not_use_in_prod';
+  return crypto.scryptSync(key, 'salt', 32);
+}
+
+function encryptConfig(configStr: string | null, key: Buffer): string | null {
+  if (!configStr) return configStr;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  let encrypted = cipher.update(configStr, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `enc:v1:${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decryptConfig(encryptedStr: string | null, key: Buffer): string | null {
+  if (!encryptedStr || !encryptedStr.startsWith('enc:v1:')) {
+    return encryptedStr;
+  }
+  const parts = encryptedStr.split(':');
+  if (parts.length !== 5) return encryptedStr;
+  const iv = Buffer.from(parts[2], 'hex');
+  const authTag = Buffer.from(parts[3], 'hex');
+  const encryptedText = parts[4];
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
 }
 
 export class BlazeJob {
   private db: any;
   private timer?: NodeJS.Timeout;
+  private encryptionKey: Buffer;
   // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs }
   private taskRunStats = new Map<number, { runCount: number, startedAt: number, maxRuns?: number, maxDurationMs?: number, onEnd?: (stats: { runCount: number, errorCount: number }) => void, errorCount?: number }>();
   private taskErrorCount = new Map<number, number>();
@@ -46,6 +81,7 @@ export class BlazeJob {
   }
 
   constructor(options: BlazeJobOptions) {
+    this.encryptionKey = getEncryptionKey(options.encryptionKey);
     this.db = new Database(options.dbPath);
     this.db.pragma('journal_mode = WAL');
     this.autoExit = !!options.autoExit;
@@ -127,18 +163,20 @@ export class BlazeJob {
         const stat = this.taskRunStats.get(task.id);
         try {
           let taskFn: () => Promise<void> = async () => { };
+          // Decrypt config before execution if needed
+          const decryptedConfig = decryptConfig(task.config, this.encryptionKey);
           // Si la tâche a une fonction JS custom (stockée en mémoire), on l'utilise
           if (this.taskFns.has(task.id)) {
             taskFn = this.taskFns.get(task.id)!;
           } else if (task.type === 'cosmos') {
-            const config = typeof task.config === 'string' ? JSON.parse(task.config) : task.config;
+            const config = typeof decryptedConfig === 'string' ? JSON.parse(decryptedConfig) : decryptedConfig;
             let configCopy = JSON.parse(JSON.stringify(config)); // clonage profond
             if (typeof configCopy === 'string') {
               configCopy = JSON.parse(configCopy);
             }
             taskFn = makeCosmosTaskFn(configCopy);
-          } else if (task.type === 'http' && task.config) {
-            let config: any = task.config;
+          } else if (task.type === 'http' && decryptedConfig) {
+            let config: any = decryptedConfig;
             // Correction : parser plusieurs fois si besoin
             for (let i = 0; i < 2; i++) {
               if (typeof config === 'string') {
@@ -271,6 +309,16 @@ export class BlazeJob {
     }
   }
 
+  public getTasks(): any[] {
+    const tasks = this.db.prepare('SELECT * FROM tasks').all();
+    return tasks.map((task: any) => {
+      if (task.config) {
+        task.config = decryptConfig(task.config, this.encryptionKey);
+      }
+      return task;
+    });
+  }
+
   /**
    * Schedule a new task and store its function in the taskMap.
    * @param taskFn The function to execute for this task
@@ -303,7 +351,7 @@ export class BlazeJob {
       priority,
       retriesLeft,
       type,
-      config ? JSON.stringify(config) : null,
+      config ? encryptConfig(JSON.stringify(config), this.encryptionKey) : null,
       webhookUrl
     );
     const taskId = result.lastInsertRowid as number;
@@ -321,94 +369,104 @@ export class BlazeJob {
   }
 }
 
-// Initialize Fastify server
-const app: FastifyInstance = Fastify({
-  logger: true
-});
+// Variables globales pour le serveur autonome
+let app: FastifyInstance | null = null;
+let db: any = null;
+let jobs: BlazeJob | null = null;
 
-// Register form body parser for x-www-form-urlencoded (before declaring routes)
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-app.register(require('@fastify/formbody'));
+export async function startServer(port: number = 9000) {
+  // Initialize Fastify server
+  app = Fastify({
+    logger: true
+  });
 
-// Initialize SQLite database
-const db = new Database('blazerjob.db');
+  // Register form body parser for x-www-form-urlencoded (before declaring routes)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.register(require('@fastify/formbody'));
 
-const jobs = new BlazeJob({ dbPath: 'blazerjob.db' });
+  // Initialize SQLite database
+  db = new Database('blazerjob.db');
+  jobs = new BlazeJob({ dbPath: 'blazerjob.db' });
 
-// GET /tasks: return all scheduled tasks
-app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
-  const tasks = db.prepare('SELECT * FROM tasks').all();
-  reply.send(tasks);
-});
+  // GET /tasks: return all scheduled tasks
+  app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
+    const tasks = jobs!.getTasks();
+    reply.send(tasks);
+  });
 
-// POST /task: schedule a new task
-app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
-  const { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd } = (request.body as any) ?? {};
-  let taskFn: () => Promise<void> = async () => { };
-  if (type === 'cosmos' && config) {
-    const cfg = JSON.parse(config) as CosmosTaskConfig;
-    const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
-    const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
-    if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
-    if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
-      // Send tokens
-      taskFn = async () => {
-        const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
-        const [account] = await wallet.getAccounts();
-        const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
-        const fee = {
-          amount: coins(cfg.gas || '5000', cfg.denom),
-          gas: cfg.gas || '200000',
+  // POST /task: schedule a new task
+  app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd } = (request.body as any) ?? {};
+    let taskFn: () => Promise<void> = async () => { };
+    if (type === 'cosmos' && config) {
+      const cfg = JSON.parse(config) as CosmosTaskConfig;
+      const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
+      const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
+      if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
+      if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
+        // Send tokens
+        taskFn = async () => {
+          const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
+          const [account] = await wallet.getAccounts();
+          const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
+          const fee = {
+            amount: coins(cfg.gas || '5000', cfg.denom),
+            gas: cfg.gas || '200000',
+          };
+          const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
+          if (result.code !== 0) throw new Error(result.rawLog);
+          return;
         };
-        const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
-        if (result.code !== 0) throw new Error(result.rawLog);
-        return;
-      };
-    } else if (cfg.queryType) {
-      // Query
-      taskFn = async () => {
-        const client = await StargateClient.connect(rpcUrl);
-        let _res;
-        if (cfg.queryType === 'balance') {
-          _res = await client.getAllBalances(cfg.queryParams?.address);
-          console.log('[Cosmos][balance]', cfg.queryParams?.address, _res);
-        } else if (cfg.queryType === 'tx') {
-          _res = await client.getTx(cfg.queryParams?.hash);
-          console.log('[Cosmos][tx]', cfg.queryParams?.hash, _res);
-        } else {
-          throw new Error('Unknown Cosmos queryType');
-        }
-        console.log('[Cosmos][query result]', _res);
-        return;
-      };
+      } else if (cfg.queryType) {
+        // Query
+        taskFn = async () => {
+          const client = await StargateClient.connect(rpcUrl);
+          let _res;
+          if (cfg.queryType === 'balance') {
+            _res = await client.getAllBalances(cfg.queryParams?.address);
+            console.log('[Cosmos][balance]', cfg.queryParams?.address, _res);
+          } else if (cfg.queryType === 'tx') {
+            _res = await client.getTx(cfg.queryParams?.hash);
+            console.log('[Cosmos][tx]', cfg.queryParams?.hash, _res);
+          } else {
+            throw new Error('Unknown Cosmos queryType');
+          }
+          console.log('[Cosmos][query result]', _res);
+          return;
+        };
+      } else {
+        throw new Error('Invalid Cosmos config: must provide tx params or queryType');
+      }
+    } else if (type === 'http' && config) {
+      const cfg = JSON.parse(config) as HttpTaskConfig;
+      taskFn = makeHttpTaskFn(cfg);
     } else {
-      throw new Error('Invalid Cosmos config: must provide tx params or queryType');
+      // Par défaut, tâche factice
+      taskFn = async () => {
+        console.log('Task executed:', { type, config });
+      };
     }
-  } else if (type === 'http' && config) {
-    const cfg = JSON.parse(config) as HttpTaskConfig;
-    taskFn = makeHttpTaskFn(cfg);
-  } else {
-    // Par défaut, tâche factice
-    taskFn = async () => {
-      console.log('Task executed:', { type, config });
-    };
-  }
-  const taskId = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd });
-  reply.code(201).send({ id: taskId });
-});
+    const taskId = jobs!.schedule(taskFn, { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd });
+    reply.code(201).send({ id: taskId });
+  });
 
-// DELETE /task/:id: delete a task by id
-app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-  const { id } = request.params as { id: string };
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-  reply.code(204).send();
-});
+  // DELETE /task/:id: delete a task by id
+  app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    reply.code(204).send();
+  });
+
+  await jobs.start();
+  await app.listen({ port });
+  console.log(`Fastify server running on http://localhost:${port}`);
+}
 
 // Méthode utilitaire pour arrêter proprement le serveur et le scheduler
 export async function stopServer() {
-  await app.close();
-  jobs.stop();
-  jobs['db'].close();
+  if (app) await app.close();
+  if (jobs) jobs.stop();
+  if (jobs && jobs['db']) jobs['db'].close();
   console.log('Serveur et scheduler arrêtés proprement.');
 }
 
@@ -423,9 +481,8 @@ process.on('SIGINT', async () => {
 });
 
 if (require.main === module) {
-  (async () => {
-    await jobs.start();
-    await app.listen({ port: 9000 });
-    console.log('Fastify server running on http://localhost:9000');
-  })();
+  startServer(9000).catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 }

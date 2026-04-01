@@ -12,7 +12,11 @@ async function listAllTasks() {
     console.log(`\n=== Base de données : ${dbFile} ===`);
     try {
       const jobs = new BlazeJob({ dbPath: path.resolve(process.cwd(), dbFile) });
-      const tasks = jobs['db'].prepare('SELECT id, type, status, runAt, lastError, config FROM tasks ORDER BY runAt DESC').all();
+      const allTasks = jobs.getTasks();
+      // Filtrer et trier pour correspondre à l'ancienne requête
+      const tasks = allTasks
+        .sort((a, b) => new Date(b.runAt).getTime() - new Date(a.runAt).getTime())
+        .map(({ id, type, status, runAt, lastError, config }) => ({ id, type, status, runAt, lastError, config }));
       console.table(tasks);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -62,7 +66,7 @@ async function main() {
       break;
     }
     case 'list': {
-      const tasks = jobs['db'].prepare('SELECT * FROM tasks').all();
+      const tasks = jobs.getTasks();
       console.table(tasks);
       break;
     }
