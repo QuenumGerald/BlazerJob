@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-04-01
+### Added
+- Added shell task handler support for system command execution.
+- Added support for optional `taskFn` in `schedule()` allowing native task handlers to execute.
+### Fixed
+- Fixed `taskCount` tracking for accurate `autoExit` and `onAllTasksEnded` callbacks.
+- Fixed `maxRuns` and `maxDurationMs` limits that were previously ignored.
+- Fixed `scheduleManyCosmosQueries` and other batch schedulers to allow native execution without dummy functions.
+- Fixed unused `shouldTerminate` local variable in scheduler tick.
+
 ## [1.3.1] - 2026-01-30
 ### Maintenance
 - Version bump to 1.3.1 for release.
