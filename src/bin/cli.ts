@@ -60,8 +60,7 @@ async function main() {
       const priority = opts.priority ? Number(opts.priority) : undefined;
       const retriesLeft = opts.retriesLeft ? Number(opts.retriesLeft) : undefined;
       const webhookUrl = opts.webhookUrl;
-      const taskFn = async () => { };
-      const id = jobs.schedule(taskFn, { runAt, interval, priority, retriesLeft, type: opts.type, config, webhookUrl });
+      const id = jobs.schedule(undefined, { runAt, interval, priority, retriesLeft, type: opts.type, config, webhookUrl });
       console.log(`Task scheduled with id: ${id}`);
       break;
     }

@@ -4,7 +4,7 @@ const jobs = new BlazeJob({ dbPath: './test_http_interval.db' });
 
 let callCount = 0;
 
-jobs.schedule(async () => {}, {
+jobs.schedule(undefined, {
   runAt: new Date(),
   interval: 2000, // 2s for test speed
   type: 'http',

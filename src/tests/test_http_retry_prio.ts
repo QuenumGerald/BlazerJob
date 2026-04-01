@@ -2,7 +2,7 @@ import { BlazeJob } from '../index';
 
 const jobs = new BlazeJob({ dbPath: './test_http_retry_prio.db', autoExit: true });
 
-jobs.schedule(async () => { }, {
+jobs.schedule(undefined, {
   runAt: new Date(),
   interval: 2000,
   type: 'http',

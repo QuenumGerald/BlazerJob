@@ -23,7 +23,7 @@ export async function scheduleManyCosmosQueries(job: BlazeJob, opts: CosmosBatch
     const scheduledAt = runAt
       ? (runAt instanceof Date ? new Date(runAt.getTime() + i * intervalMs) : new Date(new Date(runAt).getTime() + i * intervalMs))
       : new Date(Date.now() + i * intervalMs);
-    job.schedule(async () => {}, {
+    job.schedule(undefined, {
       type: 'cosmos',
       runAt: scheduledAt,
       priority,

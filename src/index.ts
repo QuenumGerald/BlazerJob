@@ -6,11 +6,15 @@ import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 const Database = require('better-sqlite3');
 import fetch from 'node-fetch'; // si node <18
 import * as crypto from 'crypto';
-import { TaskType, TaskConfig, CosmosTaskConfig, HttpTaskConfig } from './types';
+import { TaskType, TaskConfig, CosmosTaskConfig, HttpTaskConfig, ShellTaskConfig } from './types';
 import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { makeCosmosTaskFn } from './cosmos/queries';
 import { makeHttpTaskFn } from './http/queries';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export interface ScheduleExtra {
   maxRuns?: number;
@@ -68,7 +72,7 @@ export class BlazeJob {
   // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs }
   private taskRunStats = new Map<number, { runCount: number, startedAt: number, maxRuns?: number, maxDurationMs?: number, onEnd?: (stats: { runCount: number, errorCount: number }) => void, errorCount?: number }>();
   private taskErrorCount = new Map<number, number>();
-  private periodicTaskCount = 0;
+  private taskCount = 0;
   private onAllTasksEndedCb?: OnAllTasksEnded;
   private autoExit: boolean;
   private concurrency: number;
@@ -128,8 +132,8 @@ export class BlazeJob {
   }
 
   private async tick() {
-    // console.log('[BlazeJob][DEBUG] tick() called. periodicTaskCount:', this.periodicTaskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
-    // console.log('[BlazeJob] tick');
+    console.log('[BlazeJob][DEBUG] tick() called. taskCount:', this.taskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
+    console.log('[BlazeJob] tick');
     type TaskRow = {
       id: number;
       runAt: string;
@@ -189,6 +193,14 @@ export class BlazeJob {
               }
             }
             taskFn = makeHttpTaskFn(config);
+          } else if (task.type === 'shell' && decryptedConfig) {
+            const config = JSON.parse(decryptedConfig) as ShellTaskConfig;
+            taskFn = async () => {
+              console.log('[DEBUG][Shell] Commande exécutée:', config.cmd);
+              const { stdout, stderr } = await execAsync(config.cmd);
+              if (stdout) console.log('[Shell][stdout]', stdout);
+              if (stderr) console.error('[Shell][stderr]', stderr);
+            };
           } else {
             // NE PAS réassigner taskFn ici pour laisser la fonction custom s'exécuter
           }
@@ -198,10 +210,13 @@ export class BlazeJob {
             stat.runCount++;
             // Vérifie si on a atteint maxRuns ou maxDuration
             if ((stat.maxRuns && stat.runCount >= stat.maxRuns) || (stat.maxDurationMs && Date.now() - stat.startedAt > stat.maxDurationMs)) {
-              let shouldTerminate = true;
+              // On ne replanifiera pas (voir condition plus bas)
             }
           }
-          if (typeof task.interval === 'number' && task.interval > 0 && (!stat?.maxRuns || stat.runCount < stat.maxRuns)) {
+          const isOverMaxRuns = stat?.maxRuns && stat.runCount >= stat.maxRuns;
+          const isOverMaxDuration = stat?.maxDurationMs && Date.now() - stat.startedAt > (stat.maxDurationMs || Infinity);
+
+          if (typeof task.interval === 'number' && task.interval > 0 && !isOverMaxRuns && !isOverMaxDuration) {
             // Replanifier la tâche périodique
             const nextRunAt = new Date(Date.now() + task.interval).toISOString();
             this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ? WHERE id = ?`).run(nextRunAt, task.id);
@@ -210,10 +225,10 @@ export class BlazeJob {
             this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
             if (stat && stat.onEnd) stat.onEnd({ runCount: stat.runCount, errorCount: stat.errorCount || 0 });
             this.taskRunStats.delete(task.id);
-            this.periodicTaskCount--;
-            // console.log('[BlazeJob][DEBUG] Après suppression, periodicTaskCount:', this.periodicTaskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
-            if (this.periodicTaskCount === 0 && this.onAllTasksEndedCb) this.onAllTasksEndedCb();
-            if (this.periodicTaskCount === 0 && this.autoExit) {
+            this.taskCount--;
+            // console.log('[BlazeJob][DEBUG] Après suppression, taskCount:', this.taskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
+            if (this.taskCount === 0 && this.onAllTasksEndedCb) this.onAllTasksEndedCb();
+            if (this.taskCount === 0 && this.autoExit) {
               // console.log('[BlazeJob][DEBUG] Condition autoExit atteinte, arrêt dans 200ms');
               setTimeout(() => {
                 try {
@@ -294,7 +309,7 @@ export class BlazeJob {
       const scheduledAt = runAt
         ? (runAt instanceof Date ? new Date(runAt.getTime() + i * intervalMs) : new Date(new Date(runAt).getTime() + i * intervalMs))
         : new Date(Date.now() + i * intervalMs);
-      this.schedule(async () => { }, {
+      this.schedule(undefined, {
         type: 'cosmos',
         runAt: scheduledAt,
         priority,
@@ -326,7 +341,7 @@ export class BlazeJob {
    * @returns The inserted task ID
    */
   public schedule(
-    taskFn: () => Promise<void>,
+    taskFn: (() => Promise<void>) | undefined,
     options: any & ScheduleExtra
   ): number {
     const {
@@ -355,8 +370,10 @@ export class BlazeJob {
       webhookUrl
     );
     const taskId = result.lastInsertRowid as number;
-    // Stocke la fonction JS en mémoire pour ce taskId
-    this.taskFns.set(taskId, taskFn);
+    // Stocke la fonction JS en mémoire pour ce taskId (si fournie)
+    if (taskFn) {
+      this.taskFns.set(taskId, taskFn);
+    }
     this.taskRunStats.set(taskId, {
       runCount: 0,
       startedAt: Date.now(),
@@ -365,6 +382,7 @@ export class BlazeJob {
       onEnd,
       errorCount: 0
     });
+    this.taskCount++;
     return taskId;
   }
 }

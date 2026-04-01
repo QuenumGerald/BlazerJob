@@ -1,7 +1,7 @@
 import { BlazeJob } from '../index';
 
 const jobs = new BlazeJob({ dbPath: './tasks_cosmos_tx.db' });
-jobs.schedule(async () => {}, {
+jobs.schedule(undefined, {
   runAt: new Date(Date.now() + 1000),
   type: 'cosmos',
   config: JSON.stringify({
