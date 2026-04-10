@@ -27,7 +27,8 @@ export type OnTaskEnd = (taskId: number, stats: { runCount: number, errorCount: 
 export type OnAllTasksEnded = () => void;
 
 export interface BlazeJobOptions {
-  dbPath: string;
+  dbPath?: string;
+  storage?: 'sqlite' | 'memory';
   autoExit?: boolean;
   concurrency?: number;
   encryptionKey?: string;
@@ -86,7 +87,9 @@ export class BlazeJob {
 
   constructor(options: BlazeJobOptions) {
     this.encryptionKey = getEncryptionKey(options.encryptionKey);
-    this.db = new Database(options.dbPath);
+    const useMemoryStorage = options.storage !== 'sqlite';
+    const dbPath = useMemoryStorage ? ':memory:' : (options.dbPath || 'blazerjob.db');
+    this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.autoExit = !!options.autoExit;
     this.concurrency = options.concurrency || 1;
@@ -402,9 +405,9 @@ export async function startServer(port: number = 9000) {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   app.register(require('@fastify/formbody'));
 
-  // Initialize SQLite database
-  db = new Database('blazerjob.db');
-  jobs = new BlazeJob({ dbPath: 'blazerjob.db' });
+  // Initialize scheduler (RAM storage by default)
+  jobs = new BlazeJob({ storage: 'memory' });
+  db = jobs['db'];
 
   // GET /tasks: return all scheduled tasks
   app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {

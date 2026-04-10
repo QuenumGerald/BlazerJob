@@ -43,6 +43,28 @@ jobs.schedule(async () => {
 jobs.start();
 ```
 
+### Mode mémoire (RAM) par défaut
+BlazerJob fonctionne **par défaut** en mémoire (RAM), sans persistance disque :
+
+```typescript
+const jobs = new BlazeJob({
+  concurrency: 16
+});
+```
+
+Dans ce mode, les tâches sont stockées dans SQLite `:memory:` et sont perdues au redémarrage du process.
+
+### Activer la persistance SQLite (optionnel)
+Si vous préférez persister les tâches dans un fichier SQLite :
+
+```typescript
+const jobs = new BlazeJob({
+  storage: 'sqlite',
+  dbPath: './tasks.db',
+  concurrency: 16
+});
+```
+
 ---
 
 ## 2. HTTP Tasks (API Calls)
