@@ -3,13 +3,14 @@
 **BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
-# Supported Connectors
+# Task Types
 
-BlazerJob currently supports the following connector:
+BlazerJob supports two types of tasks:
 
-| Connector Type | Description                                    |
-|---------------|------------------------------------------------|
-| `http`        | Generic HTTP requests (GET, POST, etc.)        |
+| Task Type | Description                                    |
+|-----------|------------------------------------------------|
+| `custom`  | Arbitrary JavaScript/TypeScript functions (most flexible) |
+| `http`    | Generic HTTP requests (GET, POST, etc.)        |
 
 ## 1. Custom Tasks (Arbitrary JavaScript/TypeScript)
 
