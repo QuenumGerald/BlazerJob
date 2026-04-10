@@ -18,7 +18,7 @@ BlazerJob can schedule and execute any custom asynchronous JavaScript/TypeScript
 
 ### Example: Custom Task
 ```typescript
-const jobs = new BlazeJob({ dbPath: './tasks.db', concurrency: 16 });
+const jobs = new BlazeJob({ concurrency: 16 });
 
 jobs.schedule(async () => {
   // Your custom logic here
@@ -304,7 +304,7 @@ Returns the ID of the created task.
 For testing or scripting purposes, you can configure BlazeJob to automatically exit the process as soon as all periodic tasks (with `maxRuns` or `maxDurationMs`) are completed:
 
 ```typescript
-const jobs = new BlazeJob({ dbPath: './test.db', autoExit: true });
+const jobs = new BlazeJob({ autoExit: true });
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -401,7 +401,7 @@ BlazerJob now lets you schedule an HTTP API request (using fetch):
 ```typescript
 import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob();
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
@@ -434,7 +434,7 @@ jobs.schedule(async () => {}, {
 ```typescript
 import { BlazeJob } from 'blazerjob';
 
-const jobs = new BlazeJob({ dbPath: './tasks.db' });
+const jobs = new BlazeJob();
 
 jobs.schedule(async () => {}, {
   runAt: new Date(),
