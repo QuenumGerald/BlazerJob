@@ -75,7 +75,7 @@ async function main() {
         console.error('Please provide the task id to delete.');
         return process.exit(1);
       }
-      jobs['db'].prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      jobs.deleteTask(Number(id));
       console.log(`Task ${id} deleted.`);
       break;
     }

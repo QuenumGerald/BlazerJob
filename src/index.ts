@@ -6,15 +6,8 @@ import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 const Database = require('better-sqlite3');
 import fetch from 'node-fetch'; // si node <18
 import * as crypto from 'crypto';
-import { TaskType, TaskConfig, CosmosTaskConfig, HttpTaskConfig, ShellTaskConfig } from './types';
-import { SigningStargateClient, StargateClient, coins } from '@cosmjs/stargate';
-import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
-import { makeCosmosTaskFn } from './cosmos/queries';
+import { TaskType, TaskConfig, HttpTaskConfig } from './types';
 import { makeHttpTaskFn } from './http/queries';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
 
 export interface ScheduleExtra {
   maxRuns?: number;
@@ -90,7 +83,9 @@ export class BlazeJob {
     const useMemoryStorage = options.storage !== 'sqlite';
     const dbPath = useMemoryStorage ? ':memory:' : (options.dbPath || 'blazerjob.db');
     this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    if (!useMemoryStorage) {
+      this.db.pragma('journal_mode = WAL');
+    }
     this.autoExit = !!options.autoExit;
     this.concurrency = options.concurrency || 1;
     this.db.prepare(`
@@ -172,40 +167,25 @@ export class BlazeJob {
           let taskFn: () => Promise<void> = async () => { };
           // Decrypt config before execution if needed
           const decryptedConfig = decryptConfig(task.config, this.encryptionKey);
-          // Si la tâche a une fonction JS custom (stockée en mémoire), on l'utilise
+          // If the task has a custom JS function (stored in memory), use it
           if (this.taskFns.has(task.id)) {
             taskFn = this.taskFns.get(task.id)!;
-          } else if (task.type === 'cosmos') {
-            const config = typeof decryptedConfig === 'string' ? JSON.parse(decryptedConfig) : decryptedConfig;
-            let configCopy = JSON.parse(JSON.stringify(config)); // clonage profond
-            if (typeof configCopy === 'string') {
-              configCopy = JSON.parse(configCopy);
-            }
-            taskFn = makeCosmosTaskFn(configCopy);
           } else if (task.type === 'http' && decryptedConfig) {
             let config: any = decryptedConfig;
-            // Correction : parser plusieurs fois si besoin
+            // Parse multiple times if needed
             for (let i = 0; i < 2; i++) {
               if (typeof config === 'string') {
                 try {
                   config = JSON.parse(config);
                 } catch (e) {
-                  console.error('[BlazeJob][HTTP] Erreur de parsing config:', e, config);
+                  console.error('[BlazeJob][HTTP] Config parsing error:', e, config);
                   break;
                 }
               }
             }
             taskFn = makeHttpTaskFn(config);
-          } else if (task.type === 'shell' && decryptedConfig) {
-            const config = JSON.parse(decryptedConfig) as ShellTaskConfig;
-            taskFn = async () => {
-              console.log('[DEBUG][Shell] Commande exécutée:', config.cmd);
-              const { stdout, stderr } = await execAsync(config.cmd);
-              if (stdout) console.log('[Shell][stdout]', stdout);
-              if (stderr) console.error('[Shell][stderr]', stderr);
-            };
           } else {
-            // NE PAS réassigner taskFn ici pour laisser la fonction custom s'exécuter
+            // Do not reassign taskFn here to let custom function execute
           }
           await taskFn();
           // Après exécution de la tâche (succès ou erreur)
@@ -276,57 +256,6 @@ export class BlazeJob {
     }
   }
 
-  /**
-   * Programme nativement plusieurs requêtes Cosmos d'un coup.
-   * @param opts
-   *   - count: nombre de requêtes à programmer
-   *   - address: adresse Cosmos cible
-   *   - queryType: type de requête ('balance', 'tx', ...)
-   *   - intervalMs: intervalle entre chaque tâche (ms, défaut 100)
-   *   - configOverrides: options avancées (optionnel)
-   *   - retriesLeft, priority, runAt, webhookUrl (optionnel)
-   */
-  public async scheduleManyCosmosQueries(opts: {
-    count: number;
-    address: string;
-    queryType: string;
-    intervalMs?: number;
-    configOverrides?: Record<string, any>;
-    retriesLeft?: number;
-    priority?: number;
-    runAt?: Date | string;
-    webhookUrl?: string;
-  }) {
-    const {
-      count,
-      address,
-      queryType,
-      intervalMs = 100,
-      configOverrides = {},
-      retriesLeft = 0,
-      priority = 0,
-      runAt,
-      webhookUrl
-    } = opts;
-    for (let i = 0; i < count; i++) {
-      const scheduledAt = runAt
-        ? (runAt instanceof Date ? new Date(runAt.getTime() + i * intervalMs) : new Date(new Date(runAt).getTime() + i * intervalMs))
-        : new Date(Date.now() + i * intervalMs);
-      this.schedule(undefined, {
-        type: 'cosmos',
-        runAt: scheduledAt,
-        priority,
-        retriesLeft,
-        webhookUrl,
-        config: {
-          queryType,
-          queryParams: { address },
-          ...configOverrides
-        }
-      });
-    }
-  }
-
   public getTasks(): any[] {
     const tasks = this.db.prepare('SELECT * FROM tasks').all();
     return tasks.map((task: any) => {
@@ -335,6 +264,14 @@ export class BlazeJob {
       }
       return task;
     });
+  }
+
+  public deleteTask(taskId: number): void {
+    this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+    // Clean up memory maps
+    this.taskFns.delete(taskId);
+    this.taskRunStats.delete(taskId);
+    this.taskErrorCount.delete(taskId);
   }
 
   /**
@@ -419,50 +356,11 @@ export async function startServer(port: number = 9000) {
   app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
     const { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd } = (request.body as any) ?? {};
     let taskFn: () => Promise<void> = async () => { };
-    if (type === 'cosmos' && config) {
-      const cfg = JSON.parse(config) as CosmosTaskConfig;
-      const rpcUrl = cfg.rpcUrl || process.env.COSMOS_RPC_URL;
-      const mnemonic = cfg.mnemonic || process.env.COSMOS_MNEMONIC;
-      if (!rpcUrl) throw new Error('No Cosmos rpcUrl (set in config or .env)');
-      if (cfg.to && cfg.amount && cfg.denom && mnemonic && cfg.chainId) {
-        // Send tokens
-        taskFn = async () => {
-          const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: 'cosmos' });
-          const [account] = await wallet.getAccounts();
-          const client = await SigningStargateClient.connectWithSigner(rpcUrl, wallet);
-          const fee = {
-            amount: coins(cfg.gas || '5000', cfg.denom),
-            gas: cfg.gas || '200000',
-          };
-          const result = await client.sendTokens(account.address, cfg.to, coins(cfg.amount, cfg.denom), fee, cfg.memo || '');
-          if (result.code !== 0) throw new Error(result.rawLog);
-          return;
-        };
-      } else if (cfg.queryType) {
-        // Query
-        taskFn = async () => {
-          const client = await StargateClient.connect(rpcUrl);
-          let _res;
-          if (cfg.queryType === 'balance') {
-            _res = await client.getAllBalances(cfg.queryParams?.address);
-            console.log('[Cosmos][balance]', cfg.queryParams?.address, _res);
-          } else if (cfg.queryType === 'tx') {
-            _res = await client.getTx(cfg.queryParams?.hash);
-            console.log('[Cosmos][tx]', cfg.queryParams?.hash, _res);
-          } else {
-            throw new Error('Unknown Cosmos queryType');
-          }
-          console.log('[Cosmos][query result]', _res);
-          return;
-        };
-      } else {
-        throw new Error('Invalid Cosmos config: must provide tx params or queryType');
-      }
-    } else if (type === 'http' && config) {
+    if (type === 'http' && config) {
       const cfg = JSON.parse(config) as HttpTaskConfig;
       taskFn = makeHttpTaskFn(cfg);
     } else {
-      // Par défaut, tâche factice
+      // Default: dummy task
       taskFn = async () => {
         console.log('Task executed:', { type, config });
       };
@@ -474,7 +372,11 @@ export async function startServer(port: number = 9000) {
   // DELETE /task/:id: delete a task by id
   app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
+    const taskId = parseInt(id, 10);
     db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    // Clean up memory maps
+    jobs!['taskFns'].delete(taskId);
+    jobs!['taskRunStats'].delete(taskId);
     reply.code(204).send();
   });
 
