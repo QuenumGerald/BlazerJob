@@ -25,6 +25,7 @@ export interface BlazeJobOptions {
   autoExit?: boolean;
   concurrency?: number;
   encryptionKey?: string;
+  debug?: boolean;
 }
 
 const ALGORITHM = 'aes-256-gcm';
@@ -70,6 +71,7 @@ export class BlazeJob {
   private onAllTasksEndedCb?: OnAllTasksEnded;
   private autoExit: boolean;
   private concurrency: number;
+  private debug: boolean;
   private activeTasksCount = 0;
   // Map: taskId -> taskFn (en mémoire)
   private taskFns = new Map<number, () => Promise<void>>();
@@ -88,6 +90,7 @@ export class BlazeJob {
     }
     this.autoExit = !!options.autoExit;
     this.concurrency = options.concurrency || 1;
+    this.debug = !!options.debug;
     this.db.prepare(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,8 +133,10 @@ export class BlazeJob {
   }
 
   private async tick() {
-    console.log('[BlazeJob][DEBUG] tick() called. taskCount:', this.taskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
-    console.log('[BlazeJob] tick');
+    if (this.debug) {
+      console.log('[BlazeJob][DEBUG] tick() called. taskCount:', this.taskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
+      console.log('[BlazeJob] tick');
+    }
     type TaskRow = {
       id: number;
       runAt: string;

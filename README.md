@@ -268,6 +268,7 @@ COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
 - **concurrency?**: Number of concurrent tasks to execute (default: `1`)
 - **autoExit?**: Automatically exit process when all periodic tasks complete (default: `false`)
 - **encryptionKey?**: Custom encryption key for task configs (default: uses `BLAZERJOB_ENCRYPTION_KEY` env var or a default key)
+- **debug?**: Enables internal scheduler logs (like `tick`) when set to `true` (default: `false`)
 
 ### schedule(taskFn: () => Promise<void>, opts: { ... }): number
 - **taskFn**: Asynchronous function to execute (your JS/TS code).
