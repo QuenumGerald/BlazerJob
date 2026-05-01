@@ -148,18 +148,11 @@ Displays tasks from all `.db` files in the current directory, with separate sect
 **Example Output:**
 ```
 === Database: blazerjob.db ===
-┌─────────┬────┬─────────┬────────────────────────────┬──────────┬─────────────────────────────┐
-│ (index) │ id │  type   │           runAt            │  status  │          config             │
-├─────────┼────┼─────────┼────────────────────────────┼──────────┼─────────────────────────────┤
-│    0    │ 1  │ 'cosmos' │ '2025-05-05T21:24:13.727Z' │ 'failed' │ '{"cmd":"echo test"}'       │
-└─────────┴────┴─────────┴────────────────────────────┴──────────┴─────────────────────────────┘
-
-=== Database: tasks_cosmos_query.db ===
-┌─────────┬────┬──────────┬────────────────────────────┬──────────┬─────────────────────────────────────┐
-│ (index) │ id │   type   │           runAt            │  status  │              config                 │
-├─────────┼────┼──────────┼────────────────────────────┼──────────┼─────────────────────────────────────┤
-│    0    │ 42 │ 'cosmos' │ '2025-05-06T02:21:28.275Z' │ 'failed' │ '{"queryType":"balance",...}'     │
-└─────────┴────┴──────────┴────────────────────────────┴──────────┴─────────────────────────────────────┘
+┌─────────┬────┬──────────┬────────────────────────────┬──────────┬─────────────────────────────┐
+│ (index) │ id │   type   │           runAt            │  status  │          config             │
+├─────────┼────┼──────────┼────────────────────────────┼──────────┼─────────────────────────────┤
+│    0    │ 1  │ 'http'   │ '2026-05-01T12:00:00.000Z' │ 'pending'│ '{"url":"https://api..."}'  │
+└─────────┴────┴──────────┴────────────────────────────┴──────────┴─────────────────────────────┘
 ```
 
 #### `list`
@@ -222,7 +215,7 @@ curl -X POST http://localhost:9000/task \
 npm install blazerjob
 ```
 
-> Note: Installation can take a bit longer because BlazerJob pulls in blockchain SDKs and builds native SQLite bindings (`better-sqlite3`). If you’re on a fresh machine, ensure build tools are available (e.g., Python + a C/C++ compiler) before installing.
+> Note: Installation may take a bit longer because BlazerJob builds native SQLite bindings (`better-sqlite3`). If you're on a fresh machine, ensure build tools are available (e.g., Python + a C/C++ compiler) before installing.
 
 ---
 
@@ -269,8 +262,7 @@ cp .env.example .env
 
 Example `.env`:
 ```
-COSMOS_MNEMONIC=0xYOUR_COSMOS_MNEMONIC
-COSMOS_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_KEY
+# Add your custom environment variables here as needed
 ```
 
 - **Never commit your real `.env` to version control!**
@@ -410,78 +402,6 @@ If you set `webhookUrl` when scheduling a task, BlazerJob will POST a JSON paylo
   "error": "Temporary error message"
 }
 ```
-
----
-
-## Example: Scheduled HTTP request (http connector)
-
-BlazerJob now lets you schedule an HTTP API request (using fetch):
-
-### Example: simple POST request
-```typescript
-import { BlazeJob } from 'blazerjob';
-
-const jobs = new BlazeJob();
-
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'http',
-  config: JSON.stringify({
-    url: 'https://httpbin.org/post',
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: { hello: 'world' }
-  })
-});
-
-jobs.start();
-```
-
-### Example: GET Request
-```typescript
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  type: 'http',
-  config: JSON.stringify({
-    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
-    method: 'GET'
-  })
-});
-```
-
-### Example: GET Request Every 10 Seconds with Response Logging
-
-```typescript
-import { BlazeJob } from 'blazerjob';
-
-const jobs = new BlazeJob();
-
-jobs.schedule(async () => {}, {
-  runAt: new Date(),
-  interval: 10000, // every 10 seconds
-  type: 'http',
-  config: JSON.stringify({
-    url: 'https://api.coindesk.com/v1/bpi/currentprice.json',
-    method: 'GET'
-  })
-});
-
-jobs.start();
-```
-
-> To log the response on the server side, modify the function in the source code:
->
-> ```typescript
-> taskFn = async () => {
->   const res = await fetch(cfg.url, {
->     method: cfg.method ?? 'POST',
->     headers: cfg.headers,
->     body: cfg.body ? JSON.stringify(cfg.body) : undefined
->   });
->   const text = await res.text();
->   console.log('[HTTP][response]', text);
-> };
-> ```
 
 ---
 

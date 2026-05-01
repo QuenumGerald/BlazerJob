@@ -1,6 +1,6 @@
 {
   "name": "blazerjob",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "TypeScript library for scheduling, executing, and managing asynchronous tasks (custom, HTTP) with a SQLite backend.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
