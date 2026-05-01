@@ -3,6 +3,25 @@
 **BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
+## Quick start
+
+```typescript
+import { BlazeJob } from "blazerjob";
+
+const jobs = new BlazeJob({
+  storage: "sqlite",
+  dbPath: "./blazerjob.db",
+  concurrency: 4
+});
+
+jobs.schedule(async () => {
+  console.log("Job executed");
+}, { runAt: new Date() });
+
+await jobs.start();
+```
+
+
 # Task Types
 
 BlazerJob supports two types of tasks:
@@ -109,7 +128,7 @@ BlazerJob provides a CLI to easily manage your scheduled tasks:
 npx ts-node src/bin/cli.ts help
 
 # Schedule a task (e.g., http)
-npx ts-node src/bin/cli.ts schedule --type http --runAt "2025-01-01T00:00:00Z"
+npx ts-node src/bin/cli.ts schedule --type http --runAt "2026-01-01T00:00:00Z"
 
 # List tasks (default blazerjob.db)
 npx ts-node src/bin/cli.ts list
@@ -186,7 +205,7 @@ await startServer(9000); // Server runs on http://localhost:9000
 curl -X POST http://localhost:9000/task \
   -H "Content-Type: application/json" \
   -d '{
-    "runAt": "2025-01-01T00:00:00Z",
+    "runAt": "2026-01-01T00:00:00Z",
     "type": "http",
     "config": {
       "url": "https://api.example.com",
