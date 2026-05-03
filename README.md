@@ -119,59 +119,6 @@ jobs.schedule(async () => {}, {
 
 ---
 
-## CLI
-
-BlazerJob provides a CLI to easily manage your scheduled tasks:
-
-```bash
-# Show help
-npx ts-node src/bin/cli.ts help
-
-# Schedule a task (e.g., http)
-npx ts-node src/bin/cli.ts schedule --type http --runAt "2026-01-01T00:00:00Z"
-
-# List tasks (default blazerjob.db)
-npx ts-node src/bin/cli.ts list
-
-# List tasks from ALL .db files in the current directory
-ts-node src/bin/cli.ts list-all
-
-# Delete a task
-npx ts-node src/bin/cli.ts delete 123
-```
-
-### Available Commands
-
-#### `list-all`
-Displays tasks from all `.db` files in the current directory, with separate sections for each database.
-
-**Example Output:**
-```
-=== Database: blazerjob.db ===
-┌─────────┬────┬──────────┬────────────────────────────┬──────────┬─────────────────────────────┐
-│ (index) │ id │   type   │           runAt            │  status  │          config             │
-├─────────┼────┼──────────┼────────────────────────────┼──────────┼─────────────────────────────┤
-│    0    │ 1  │ 'http'   │ '2026-05-01T12:00:00.000Z' │ 'pending'│ '{"url":"https://api..."}'  │
-└─────────┴────┴──────────┴────────────────────────────┴──────────┴─────────────────────────────┘
-```
-
-#### `list`
-Shows tasks only from the default database (`blazerjob.db`).
-
-#### `schedule`
-Schedules a new task. Available options:
-- `--type`: Task type (`http`)
-- `--runAt`: Execution time (default: now)
-- `--interval`: Repeat interval in ms (optional)
-- `--priority`: Task priority (optional)
-- `--retriesLeft`: Number of retry attempts (optional)
-- `--webhookUrl`: Webhook URL for notifications (optional)
-
-#### `delete <id>`
-Deletes a task by its ID.
-
----
-
 ## HTTP Server
 
 BlazerJob includes a built-in HTTP server (Fastify) for managing tasks via REST API.
