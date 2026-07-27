@@ -2,6 +2,8 @@ import { BlazeJob } from '../index';
 
 const jobs = new BlazeJob({ dbPath: './test_shell.db' });
 
+async function main() {
+await jobs.start();
 jobs.schedule(undefined, {
     runAt: new Date(),
     type: 'shell',
@@ -17,3 +19,6 @@ setTimeout(() => {
     console.log('Test shell finished.');
     process.exit(0);
 }, 3000);
+}
+
+main();

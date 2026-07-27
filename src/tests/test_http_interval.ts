@@ -2,7 +2,8 @@ import { BlazeJob } from '../index';
 
 const jobs = new BlazeJob({ dbPath: './test_http_interval.db' });
 
-let callCount = 0;
+async function main() {
+await jobs.start();
 
 jobs.schedule(undefined, {
   runAt: new Date(),
@@ -14,11 +15,12 @@ jobs.schedule(undefined, {
   })
 });
 
-jobs.start();
-
 // Stop after 3 calls (simulate interval)
 setTimeout(() => {
   jobs.stop();
   console.log('Test finished.');
   process.exit(0);
 }, 7000);
+}
+
+main();

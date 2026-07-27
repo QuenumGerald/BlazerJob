@@ -4,6 +4,8 @@ import { BlazeJob } from '../index';
 const jobs = new BlazeJob({ dbPath: './custom_retry_test.db' });
 
 // Exemple minimal de tâche custom avec juste un console.log
+async function main() {
+await jobs.start();
 const taskId = jobs.schedule(
   async () => {
     console.log('[CUSTOM] Hello from my custom BlazeJob task!');
@@ -23,4 +25,6 @@ const taskId = jobs.schedule(
     }
   }
 );
-jobs.start();
+}
+
+main();

@@ -8,7 +8,8 @@ const DB_PATH = process.env.BENCH_DB || 'bench.db';
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 (async () => {
-    const runner = new BlazeJob({ dbPath: DB_PATH, concurrency: CONCURRENCY });
+    const runner = new BlazeJob({ storage: 'sqlite', dbPath: DB_PATH, concurrency: CONCURRENCY });
+    await runner.start();
 
     let completed = 0;
     const startedAt = Date.now();
@@ -37,5 +38,4 @@ const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
         });
     }
 
-    await runner.start();
 })();

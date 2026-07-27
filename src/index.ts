@@ -1,12 +1,6 @@
-import * as dotenv from 'dotenv';
-dotenv.config();
-
-import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-// @ts-ignore
-const Database = require('better-sqlite3');
+import Database from 'better-sqlite3';
 import fetch from 'node-fetch'; // si node <18
 import * as crypto from 'crypto';
-import { TaskType, TaskConfig, HttpTaskConfig } from './types';
 import { makeHttpTaskFn } from './http/queries';
 
 export interface ScheduleExtra {
@@ -61,7 +55,9 @@ function decryptConfig(encryptedStr: string | null, key: Buffer): string | null 
 }
 
 export class BlazeJob {
-  private db: any;
+  private db?: Database.Database;
+  private readonly dbPath: string;
+  private readonly useMemoryStorage: boolean;
   private timer?: NodeJS.Timeout;
   private encryptionKey: Buffer;
   // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs }
@@ -82,16 +78,19 @@ export class BlazeJob {
 
   constructor(options: BlazeJobOptions) {
     this.encryptionKey = getEncryptionKey(options.encryptionKey);
-    const useMemoryStorage = options.storage !== 'sqlite';
-    const dbPath = useMemoryStorage ? ':memory:' : (options.dbPath || 'blazerjob.db');
-    this.db = new Database(dbPath);
-    if (!useMemoryStorage) {
-      this.db.pragma('journal_mode = WAL');
-    }
+    this.useMemoryStorage = options.storage !== 'sqlite';
+    this.dbPath = this.useMemoryStorage ? ':memory:' : (options.dbPath || 'blazerjob.db');
     this.autoExit = !!options.autoExit;
     this.concurrency = options.concurrency || 1;
     this.debug = !!options.debug;
-    this.db.prepare(`
+  }
+
+  private initializeDatabase(): void {
+    const db = this.getDatabase();
+    if (!this.useMemoryStorage) {
+      db.pragma('journal_mode = WAL');
+    }
+    db.prepare(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         runAt TEXT,
@@ -108,31 +107,58 @@ export class BlazeJob {
       )
     `).run();
     try {
-      this.db.prepare('ALTER TABLE tasks ADD COLUMN lastError TEXT').run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN lastError TEXT').run();
     } catch (e) {
       // Ignore si déjà présent
     }
     try {
-      this.db.prepare('ALTER TABLE tasks ADD COLUMN webhookUrl TEXT').run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN webhookUrl TEXT').run();
     } catch (e) {
       // Ignore si déjà présent
     }
   }
 
-  public async start() {
+  private getDatabase(): Database.Database {
+    if (!this.db) {
+      throw new Error('BlazeJob is not started. Call and await start() before using the scheduler.');
+    }
+    return this.db;
+  }
+
+  public async start(): Promise<void> {
+    if (!this.db) {
+      const db = new Database(this.dbPath);
+      this.db = db;
+      try {
+        this.initializeDatabase();
+      } catch (error) {
+        db.close();
+        this.db = undefined;
+        throw error;
+      }
+    }
     if (!this.timer) {
       this.timer = setInterval(() => this.tick(), 50);
     }
   }
 
-  public stop() {
+  public stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    if (this.db) {
+      this.db.close();
+      this.db = undefined;
+    }
+  }
+
+  public close(): void {
+    this.stop();
   }
 
   private async tick() {
+    const db = this.getDatabase();
     if (this.debug) {
       console.log('[BlazeJob][DEBUG] tick() called. taskCount:', this.taskCount, 'taskRunStats:', Array.from(this.taskRunStats.keys()));
       console.log('[BlazeJob] tick');
@@ -154,7 +180,7 @@ export class BlazeJob {
     const now = new Date().toISOString();
     const availableSlots = this.concurrency - this.activeTasksCount;
     if (availableSlots <= 0) return;
-    const selectStmt = this.db.prepare(`
+    const selectStmt = db.prepare(`
       SELECT * FROM tasks
       WHERE runAt <= @now AND status = 'pending'
       ORDER BY priority DESC, runAt ASC
@@ -164,7 +190,7 @@ export class BlazeJob {
     if (dueTasks.length === 0) return;
 
     for (const task of dueTasks) {
-      this.db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(task.id);
+      db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(task.id);
       this.activeTasksCount++;
       (async () => {
         const stat = this.taskRunStats.get(task.id);
@@ -207,10 +233,10 @@ export class BlazeJob {
           if (typeof task.interval === 'number' && task.interval > 0 && !isOverMaxRuns && !isOverMaxDuration) {
             // Replanifier la tâche périodique
             const nextRunAt = new Date(Date.now() + task.interval).toISOString();
-            this.db.prepare(`UPDATE tasks SET status = 'pending', runAt = ? WHERE id = ?`).run(nextRunAt, task.id);
+            db.prepare(`UPDATE tasks SET status = 'pending', runAt = ? WHERE id = ?`).run(nextRunAt, task.id);
           } else {
             // Tâche terminée (succès ou fin de retry)
-            this.db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
+            db.prepare(`UPDATE tasks SET status = 'success', executed_at = ? WHERE id = ?`).run(new Date().toISOString(), task.id);
             if (stat && stat.onEnd) stat.onEnd({ runCount: stat.runCount, errorCount: stat.errorCount || 0 });
             this.taskRunStats.delete(task.id);
             this.taskCount--;
@@ -223,11 +249,6 @@ export class BlazeJob {
                   this.stop();
                 } catch (e) {
                   console.error('[BlazeJob] Erreur lors de l\'arrêt du scheduler', e);
-                }
-                try {
-                  if (this.db && typeof this.db.close === 'function') this.db.close();
-                } catch (e) {
-                  console.error('[BlazeJob] Erreur lors de la fermeture de la base', e);
                 }
                 console.log('[BlazeJob] Toutes les tâches périodiques sont terminées. Arrêt automatique du process.');
                 process.exit(0);
@@ -262,7 +283,7 @@ export class BlazeJob {
   }
 
   public getTasks(): any[] {
-    const tasks = this.db.prepare('SELECT * FROM tasks').all();
+    const tasks = this.getDatabase().prepare('SELECT * FROM tasks').all();
     return tasks.map((task: any) => {
       if (task.config) {
         task.config = decryptConfig(task.config, this.encryptionKey);
@@ -272,7 +293,7 @@ export class BlazeJob {
   }
 
   public deleteTask(taskId: number): void {
-    this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+    this.getDatabase().prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
     // Clean up memory maps
     this.taskFns.delete(taskId);
     this.taskRunStats.delete(taskId);
@@ -301,7 +322,7 @@ export class BlazeJob {
       maxDurationMs,
       onEnd
     } = options;
-    const stmt = this.db.prepare(`
+    const stmt = this.getDatabase().prepare(`
       INSERT INTO tasks (runAt, interval, priority, retriesLeft, type, config, webhookUrl)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
@@ -330,87 +351,4 @@ export class BlazeJob {
     this.taskCount++;
     return taskId;
   }
-}
-
-// Variables globales pour le serveur autonome
-let app: FastifyInstance | null = null;
-let db: any = null;
-let jobs: BlazeJob | null = null;
-
-export async function startServer(port: number = 9000) {
-  // Initialize Fastify server
-  app = Fastify({
-    logger: true
-  });
-
-  // Register form body parser for x-www-form-urlencoded (before declaring routes)
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  app.register(require('@fastify/formbody'));
-
-  // Initialize scheduler (RAM storage by default)
-  jobs = new BlazeJob({ storage: 'memory' });
-  db = jobs['db'];
-
-  // GET /tasks: return all scheduled tasks
-  app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
-    const tasks = jobs!.getTasks();
-    reply.send(tasks);
-  });
-
-  // POST /task: schedule a new task
-  app.post('/task', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd } = (request.body as any) ?? {};
-    let taskFn: () => Promise<void> = async () => { };
-    if (type === 'http' && config) {
-      const cfg = JSON.parse(config) as HttpTaskConfig;
-      taskFn = makeHttpTaskFn(cfg);
-    } else {
-      // Default: dummy task
-      taskFn = async () => {
-        console.log('Task executed:', { type, config });
-      };
-    }
-    const taskId = jobs!.schedule(taskFn, { runAt, interval, priority, retriesLeft, type, config, webhookUrl, maxRuns, maxDurationMs, onEnd });
-    reply.code(201).send({ id: taskId });
-  });
-
-  // DELETE /task/:id: delete a task by id
-  app.delete('/task/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-    const taskId = parseInt(id, 10);
-    db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-    // Clean up memory maps
-    jobs!['taskFns'].delete(taskId);
-    jobs!['taskRunStats'].delete(taskId);
-    reply.code(204).send();
-  });
-
-  await jobs.start();
-  await app.listen({ port });
-  console.log(`Fastify server running on http://localhost:${port}`);
-}
-
-// Méthode utilitaire pour arrêter proprement le serveur et le scheduler
-export async function stopServer() {
-  if (app) await app.close();
-  if (jobs) jobs.stop();
-  if (jobs && jobs['db']) jobs['db'].close();
-  console.log('Serveur et scheduler arrêtés proprement.');
-}
-
-// Optionnel : gestion du signal SIGTERM/SIGINT
-process.on('SIGTERM', async () => {
-  await stopServer();
-  process.exit(0);
-});
-process.on('SIGINT', async () => {
-  await stopServer();
-  process.exit(0);
-});
-
-if (require.main === module) {
-  startServer(9000).catch(err => {
-    console.error(err);
-    process.exit(1);
-  });
 }

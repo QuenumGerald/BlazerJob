@@ -3,6 +3,10 @@
 **BlazerJob** is a lightweight, SQLite-backed task scheduler for Node.js and TypeScript applications.
 Use it as a library in your code to schedule, execute, and manage asynchronous tasks.
 
+## Requirements
+
+BlazerJob supports **Node.js 20 and all newer Node.js releases**. Node.js 20 remains the default development version in `.nvmrc`, but it is not a maximum version.
+
 ## Quick start
 
 ```typescript
@@ -14,11 +18,12 @@ const jobs = new BlazeJob({
   concurrency: 4
 });
 
+await jobs.start();
+
 jobs.schedule(async () => {
   console.log("Job executed");
 }, { runAt: new Date() });
 
-await jobs.start();
 ```
 
 
@@ -39,6 +44,8 @@ BlazerJob can schedule and execute any custom asynchronous JavaScript/TypeScript
 ```typescript
 const jobs = new BlazeJob({ concurrency: 16 });
 
+await jobs.start();
+
 jobs.schedule(async () => {
   // Your custom logic here
   console.log('Hello from a custom task!');
@@ -52,7 +59,6 @@ jobs.schedule(async () => {
   }
 });
 
-jobs.start();
 ```
 
 ### Storage Options
@@ -245,10 +251,10 @@ Example `.env`:
 Returns the ID of the created task.
 
 ### start(): Promise<void>
-- Starts the scheduler loop (automatically executes due tasks).
+- Opens and initializes the database, then starts the scheduler loop. Await this method before calling database-backed methods such as `schedule()`, `getTasks()`, or `deleteTask()`.
 
 ### stop(): void
-- Stops the scheduler loop (does not close the database).
+- Stops the scheduler loop and closes the database. `close()` is an alias for `stop()`.
 
 ### deleteTask(taskId: number): void
 - Deletes a task by ID and cleans up associated memory (task functions, stats, error counts).
@@ -265,6 +271,8 @@ For testing or scripting purposes, you can configure BlazeJob to automatically e
 ```typescript
 const jobs = new BlazeJob({ autoExit: true });
 
+await jobs.start();
+
 jobs.schedule(async () => {}, {
   runAt: new Date(),
   interval: 2000,
@@ -274,7 +282,6 @@ jobs.schedule(async () => {}, {
   }
 });
 
-jobs.start();
 // The process will automatically exit after the last periodic task is finished.
 ```
 

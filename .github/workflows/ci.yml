@@ -8,7 +8,12 @@ on:
 
 jobs:
   build-test-lint:
+    name: Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -16,13 +21,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: npx eslint . --ext .ts || echo "Lint step skipped (no ESLint config)"
 
       - name: Build
-        run: npm run build
+        run: npm test
