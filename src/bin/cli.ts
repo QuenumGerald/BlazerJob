@@ -10,8 +10,9 @@ const dbFiles = fs.readdirSync('.').filter(file => file.endsWith('.db'));
 async function listAllTasks() {
   for (const dbFile of dbFiles) {
     console.log(`\n=== Base de données : ${dbFile} ===`);
+    const jobs = new BlazeJob({ storage: 'sqlite', dbPath: path.resolve(process.cwd(), dbFile) });
     try {
-      const jobs = new BlazeJob({ dbPath: path.resolve(process.cwd(), dbFile) });
+      await jobs.start();
       const allTasks = jobs.getTasks();
       // Filtrer et trier pour correspondre à l'ancienne requête
       const tasks = allTasks
@@ -21,6 +22,8 @@ async function listAllTasks() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Error with ${dbFile}:`, errorMessage);
+    } finally {
+      jobs.close();
     }
   }
 }
@@ -35,9 +38,14 @@ async function main() {
 
   // Logique existante...
   const dbPath = path.resolve(process.cwd(), 'blazerjob.db');
-  const jobs = new BlazeJob({ dbPath });
+  const jobs = new BlazeJob({ storage: 'sqlite', dbPath });
 
-  switch (cmd) {
+  if (cmd !== 'help' && cmd !== undefined) {
+    await jobs.start();
+  }
+
+  try {
+    switch (cmd) {
     case 'schedule': {
       // Minimal CLI: blazerjob schedule --type shell --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
       const opts: any = {};
@@ -82,6 +90,9 @@ async function main() {
     case 'help':
     default:
       console.log(`Usage: blazerjob <command> [options]\n\nCommands:\n  schedule   Schedule a new task\n  list       List tasks in blazerjob.db\n  list-all   List tasks from all .db files\n  delete     Delete a task by id\n  help       Show this help message\n`);
+    }
+  } finally {
+    jobs.close();
   }
 }
 

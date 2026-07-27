@@ -2,6 +2,8 @@ import { BlazeJob } from '../index';
 
 const jobs = new BlazeJob({ dbPath: './test_http_retry_prio.db', autoExit: true });
 
+async function main() {
+await jobs.start();
 jobs.schedule(undefined, {
   runAt: new Date(),
   interval: 2000,
@@ -18,5 +20,6 @@ jobs.schedule(undefined, {
     console.log(`Résumé : exécutions = ${stats.runCount}, erreurs = ${stats.errorCount}`);
   }
 });
+}
 
-jobs.start();
+main();

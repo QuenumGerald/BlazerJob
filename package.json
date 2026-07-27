@@ -9,9 +9,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "test": "npm run build && node --test test/runtime.test.cjs"
   },
   "repository": {
     "type": "git",
@@ -36,6 +36,9 @@
   ],
   "author": "Gérald Quenum <geraldquenum9@gmail.com>",
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "bugs": {
     "url": "https://github.com/QuenumGerald/BlazerJob/issues"
   },
@@ -49,7 +52,7 @@
   },
   "dependencies": {
     "@fastify/formbody": "^8.0.2",
-    "better-sqlite3": "^11.9.1",
+    "better-sqlite3": "12.6.2",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.2",
     "node-fetch": "^2.7.0"
