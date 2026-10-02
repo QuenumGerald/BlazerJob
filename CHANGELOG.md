@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-10-02
+### Added
+- Named handlers with JSON payloads for restart-safe custom tasks.
+- Explicit `blocked` status when a handler is missing (never a fake success).
+- Lease-based reclaim of interrupted `running` tasks (at-least-once delivery).
+- Typed results via `waitFor`, `getTask`, `getTaskResult`, and `on('task')`.
+- HTTP results: status, filtered headers, JSON/text/empty bodies.
+- Configurable retries (backoff, jitter, policy), `Retry-After`, `timeoutMs` vs `maxDurationMs`, `AbortSignal`.
+- `cancel()`, async `shutdown()`, process-local `rate` limits.
+- SQLite migrations for resume metadata and stored results.
+### Changed
+- Native HTTP tasks must be scheduled without a custom function.
+- No implicit encryption key; encrypt only with an explicit key.
+- Library import no longer installs SIGINT/SIGTERM or calls `process.exit()`.
+- `autoExit` no longer exits the process.
+- Default HTTP method is GET when omitted.
+- Management server redacts secrets and does not accept anonymous functions.
+### Fixed
+- Persisted anonymous tasks no longer complete as success without running.
+- `running` tasks after restart are reclaimed via leases, not left stuck or blindly reset.
+- Webhooks are actually delivered.
+- Observer/callback exceptions cannot retry a successful task.
+
 ## [1.4.0] - 2026-04-01
 ### Added
 - Added shell task handler support for system command execution.
@@ -42,5 +65,4 @@ All notable changes to this project will be documented in this file.
 - Updated README with better feature highlights and usage examples
 
 ## [1.0.0] - Initial release
-- First public version, core features for scheduling and managing async tasks with SQLite backend.
-
+- First public version, core features for scheduling and managing SQLite-backed tasks.

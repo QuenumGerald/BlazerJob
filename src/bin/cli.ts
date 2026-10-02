@@ -1,22 +1,18 @@
 #!/usr/bin/env node
-import { BlazeJob } from '../index';
+import { BlazeJob } from '../blaze-job';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// Cherche tous les fichiers .db dans le répertoire courant
-const dbFiles = fs.readdirSync('.').filter(file => file.endsWith('.db'));
-
-// Affiche toutes les tâches de toutes les bases de données
 async function listAllTasks() {
+  const dbFiles = fs.readdirSync('.').filter(file => file.endsWith('.db'));
   for (const dbFile of dbFiles) {
-    console.log(`\n=== Base de données : ${dbFile} ===`);
+    console.log(`\n=== Database: ${dbFile} ===`);
     try {
       const jobs = new BlazeJob({ storage: 'sqlite', dbPath: path.resolve(process.cwd(), dbFile) });
       const allTasks = jobs.getTasks();
-      // Filtrer et trier pour correspondre à l'ancienne requête
       const tasks = allTasks
         .sort((a, b) => new Date(b.runAt).getTime() - new Date(a.runAt).getTime())
-        .map(({ id, type, status, runAt, lastError, config }) => ({ id, type, status, runAt, lastError, config }));
+        .map(({ id, type, status, runAt, lastError }) => ({ id, type, status, runAt, lastError }));
       console.table(tasks);
       jobs.close();
     } catch (err) {
@@ -34,14 +30,12 @@ async function main() {
     return;
   }
 
-  // Logique existante...
   const dbPath = path.resolve(process.cwd(), 'blazerjob.db');
   const jobs = new BlazeJob({ storage: 'sqlite', dbPath });
 
   switch (cmd) {
     case 'schedule': {
-      // Minimal CLI: blazerjob schedule --type shell --cmd "echo hello" --runAt "2025-01-01T00:00:00Z"
-      const opts: any = {};
+      const opts: Record<string, string> = {};
       for (let i = 0; i < args.length; i++) {
         if (args[i].startsWith('--')) {
           opts[args[i].slice(2)] = args[i + 1];
@@ -50,30 +44,32 @@ async function main() {
       }
       if (!opts.type) {
         console.error('Missing --type');
+        jobs.close();
         return process.exit(1);
       }
-      let config: any = undefined;
-      if (opts.type === 'shell' && opts.cmd) {
-        config = { cmd: opts.cmd };
+      let config: unknown = undefined;
+      if (opts.type === 'http' && opts.url) {
+        config = { url: opts.url, method: opts.method || 'GET' };
       }
       const runAt = opts.runAt || new Date().toISOString();
       const interval = opts.interval ? Number(opts.interval) : undefined;
       const priority = opts.priority ? Number(opts.priority) : undefined;
       const retriesLeft = opts.retriesLeft ? Number(opts.retriesLeft) : undefined;
       const webhookUrl = opts.webhookUrl;
-      const id = jobs.schedule(undefined, { runAt, interval, priority, retriesLeft, type: opts.type, config, webhookUrl });
+      const id = jobs.schedule(undefined, { runAt, interval, priority, retriesLeft, type: opts.type, config, webhookUrl, handler: opts.handler, payload: opts.payload ? JSON.parse(opts.payload) : undefined });
       console.log(`Task scheduled with id: ${id}`);
       break;
     }
     case 'list': {
       const tasks = jobs.getTasks();
-      console.table(tasks);
+      console.table(tasks.map(({ id, type, status, runAt, lastError }) => ({ id, type, status, runAt, lastError })));
       break;
     }
     case 'delete': {
       const id = args[0];
       if (!id) {
         console.error('Please provide the task id to delete.');
+        jobs.close();
         return process.exit(1);
       }
       jobs.deleteTask(Number(id));
@@ -87,4 +83,18 @@ async function main() {
   jobs.close();
 }
 
-main().catch(console.error);
+function installCliSignals() {
+  const halt = async () => {
+    process.exit(0);
+  };
+  process.on('SIGTERM', halt);
+  process.on('SIGINT', halt);
+}
+
+if (require.main === module) {
+  installCliSignals();
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
