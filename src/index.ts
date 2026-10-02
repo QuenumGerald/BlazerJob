@@ -2,9 +2,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-// @ts-ignore
-const Database = require('better-sqlite3');
-import fetch from 'node-fetch'; // si node <18
+import Database from 'better-sqlite3';
 import * as crypto from 'crypto';
 import { TaskType, TaskConfig, HttpTaskConfig } from './types';
 import { makeHttpTaskFn } from './http/queries';
@@ -61,7 +59,7 @@ function decryptConfig(encryptedStr: string | null, key: Buffer): string | null 
 }
 
 export class BlazeJob {
-  private db: any;
+  private db: Database.Database;
   private timer?: NodeJS.Timeout;
   private encryptionKey: Buffer;
   // Map: taskId -> { runCount, startedAt, maxRuns, maxDurationMs }
@@ -80,7 +78,7 @@ export class BlazeJob {
     this.onAllTasksEndedCb = cb;
   }
 
-  constructor(options: BlazeJobOptions) {
+  constructor(options: BlazeJobOptions = {}) {
     this.encryptionKey = getEncryptionKey(options.encryptionKey);
     const useMemoryStorage = options.storage !== 'sqlite';
     const dbPath = useMemoryStorage ? ':memory:' : (options.dbPath || 'blazerjob.db');
@@ -121,7 +119,7 @@ export class BlazeJob {
 
   public async start() {
     if (!this.timer) {
-      this.timer = setInterval(() => this.tick(), 50);
+      this.timer = setInterval(() => void this.tick(), 50);
     }
   }
 
@@ -130,6 +128,12 @@ export class BlazeJob {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+  }
+
+  /** Stop scheduling and release the SQLite connection. */
+  public close() {
+    this.stop();
+    if (this.db.open) this.db.close();
   }
 
   private async tick() {
@@ -236,6 +240,24 @@ export class BlazeJob {
           }
         } catch (err) {
           console.error('[BlazeJob] Erreur lors de l\'exécution de la tâche', task.id, err);
+          const error = err instanceof Error ? err.message : String(err);
+          const errorCount = (this.taskErrorCount.get(task.id) || 0) + 1;
+          this.taskErrorCount.set(task.id, errorCount);
+          if (stat) stat.errorCount = errorCount;
+
+          if (task.retriesLeft > 0) {
+            this.db.prepare(`UPDATE tasks SET status = 'pending', retriesLeft = ?, lastError = ? WHERE id = ?`)
+              .run(task.retriesLeft - 1, error, task.id);
+          } else {
+            this.db.prepare(`UPDATE tasks SET status = 'failed', executed_at = ?, lastError = ? WHERE id = ?`)
+              .run(new Date().toISOString(), error, task.id);
+            if (stat?.onEnd) stat.onEnd({ runCount: stat.runCount, errorCount });
+            this.taskRunStats.delete(task.id);
+            this.taskErrorCount.delete(task.id);
+            this.taskFns.delete(task.id);
+            this.taskCount--;
+            if (this.taskCount === 0 && this.onAllTasksEndedCb) this.onAllTasksEndedCb();
+          }
         } finally {
           this.activeTasksCount--;
         }
@@ -245,7 +267,9 @@ export class BlazeJob {
     // Drain immédiatement si d'autres tâches sont prêtes et qu'il reste de la capacité,
     // sans attendre le prochain intervalle.
     if (dueTasks.length === availableSlots) {
-      setImmediate(() => this.tick());
+      setImmediate(() => {
+        if (this.timer) void this.tick();
+      });
     }
   }
 
@@ -393,8 +417,7 @@ export async function startServer(port: number = 9000) {
 // Méthode utilitaire pour arrêter proprement le serveur et le scheduler
 export async function stopServer() {
   if (app) await app.close();
-  if (jobs) jobs.stop();
-  if (jobs && jobs['db']) jobs['db'].close();
+  if (jobs) jobs.close();
   console.log('Serveur et scheduler arrêtés proprement.');
 }
 

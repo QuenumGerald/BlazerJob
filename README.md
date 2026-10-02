@@ -158,11 +158,17 @@ curl -X POST http://localhost:9000/task \
 
 ## Installation
 
+BlazerJob requires Node.js 22 or newer. Node.js 24 is also tested in CI.
+
 ```bash
 npm install blazerjob
 ```
 
 > Note: Installation may take a bit longer because BlazerJob builds native SQLite bindings (`better-sqlite3`). If you're on a fresh machine, ensure build tools are available (e.g., Python + a C/C++ compiler) before installing.
+
+### Migrating from BlazerJob 1.x
+
+Current BlazerJob releases require Node.js 22 or newer. Upgrade the Node.js runtime before upgrading BlazerJob; the public CommonJS/TypeScript imports and the existing SQLite task table remain compatible.
 
 ---
 

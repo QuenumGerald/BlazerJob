@@ -11,13 +11,14 @@ async function listAllTasks() {
   for (const dbFile of dbFiles) {
     console.log(`\n=== Base de données : ${dbFile} ===`);
     try {
-      const jobs = new BlazeJob({ dbPath: path.resolve(process.cwd(), dbFile) });
+      const jobs = new BlazeJob({ storage: 'sqlite', dbPath: path.resolve(process.cwd(), dbFile) });
       const allTasks = jobs.getTasks();
       // Filtrer et trier pour correspondre à l'ancienne requête
       const tasks = allTasks
         .sort((a, b) => new Date(b.runAt).getTime() - new Date(a.runAt).getTime())
         .map(({ id, type, status, runAt, lastError, config }) => ({ id, type, status, runAt, lastError, config }));
       console.table(tasks);
+      jobs.close();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Error with ${dbFile}:`, errorMessage);
@@ -35,7 +36,7 @@ async function main() {
 
   // Logique existante...
   const dbPath = path.resolve(process.cwd(), 'blazerjob.db');
-  const jobs = new BlazeJob({ dbPath });
+  const jobs = new BlazeJob({ storage: 'sqlite', dbPath });
 
   switch (cmd) {
     case 'schedule': {
@@ -83,6 +84,7 @@ async function main() {
     default:
       console.log(`Usage: blazerjob <command> [options]\n\nCommands:\n  schedule   Schedule a new task\n  list       List tasks in blazerjob.db\n  list-all   List tasks from all .db files\n  delete     Delete a task by id\n  help       Show this help message\n`);
   }
+  jobs.close();
 }
 
 main().catch(console.error);
